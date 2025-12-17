@@ -1,0 +1,193 @@
+import sqlite3
+import os
+from datetime import datetime
+from contextlib import contextmanager
+
+# Создаем папку для базы данных, если она не существует
+DB_DIR = 'data'
+DB_PATH = os.path.join(DB_DIR, 'database.db')
+
+if not os.path.exists(DB_DIR):
+    os.makedirs(DB_DIR)
+    print(f"✅ Создана папка для базы данных: {DB_DIR}")
+
+
+@contextmanager
+def get_db():
+    """Контекстный менеджер для подключения к базе данных"""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        yield conn
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка базы данных: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def init_db():
+    """Инициализация базы данных (создание таблиц)"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Таблица пользователей
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER UNIQUE NOT NULL,
+                client_email TEXT NOT NULL,
+                client_uuid TEXT NOT NULL,
+                sub_id TEXT NOT NULL,
+                expiry_time INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                total_traffic_mb INTEGER DEFAULT 0,
+                last_traffic_update TIMESTAMP
+            )
+            ''')
+
+            # Таблица транзакций (для будущей оплаты)
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                amount INTEGER,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+            ''')
+
+            # Создаем индекс для быстрого поиска по telegram_id
+            cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_users_telegram_id 
+            ON users (telegram_id)
+            ''')
+
+            conn.commit()
+            print(f"✅ База данных инициализирована: {DB_PATH}")
+
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при инициализации базы данных: {e}")
+        raise
+
+
+def add_user(telegram_id, client_email, client_uuid, sub_id, expiry_time=0):
+    """Добавление нового пользователя"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT INTO users (telegram_id, client_email, client_uuid, sub_id, expiry_time)
+            VALUES (?, ?, ?, ?, ?)
+            ''', (telegram_id, client_email, client_uuid, sub_id, expiry_time))
+            conn.commit()
+            print(f"✅ Пользователь {telegram_id} добавлен в БД")
+            return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        print(f"⚠️ Пользователь {telegram_id} уже существует в БД")
+        return None
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при добавлении пользователя: {e}")
+        return None
+
+
+def get_user_by_telegram_id(telegram_id):
+    """Получение пользователя по Telegram ID"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE telegram_id = ?', (telegram_id,))
+            user = cursor.fetchone()
+            return dict(user) if user else None
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при получении пользователя {telegram_id}: {e}")
+        return None
+
+
+def update_user_expiry(telegram_id, new_expiry_time):
+    """Обновление срока действия подписки пользователя"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            UPDATE users 
+            SET expiry_time = ?, is_active = 1 
+            WHERE telegram_id = ?
+            ''', (new_expiry_time, telegram_id))
+            conn.commit()
+            print(f"✅ Обновлен срок подписки для пользователя {telegram_id}")
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при обновлении пользователя {telegram_id}: {e}")
+        return False
+
+
+def update_user_traffic(telegram_id, total_traffic_mb):
+    """Обновление трафика пользователя"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            UPDATE users 
+            SET total_traffic_mb = ?, last_traffic_update = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+            ''', (total_traffic_mb, telegram_id))
+            conn.commit()
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при обновлении трафика пользователя {telegram_id}: {e}")
+        return False
+
+
+def get_all_users():
+    """Получение списка всех пользователей"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users ORDER BY created_at DESC')
+            users = cursor.fetchall()
+            return [dict(user) for user in users]
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при получении списка пользователей: {e}")
+        return []
+
+
+def delete_user_by_email(client_email):
+    """Удаление пользователя по email клиента"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM users WHERE client_email = ?', (client_email,))
+            conn.commit()
+            deleted = cursor.rowcount > 0
+            if deleted:
+                print(f"✅ Пользователь {client_email} удален из БД")
+            return deleted
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при удалении пользователя {client_email}: {e}")
+        return False
+
+
+def get_user_by_client_email(client_email):
+    """Получение пользователя по email клиента"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE client_email = ?', (client_email,))
+            user = cursor.fetchone()
+            return dict(user) if user else None
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при поиске пользователя по email {client_email}: {e}")
+        return None
+
+# Инициализация БД при импорте
+if __name__ == "__main__":
+    init_db()
+    print("База данных готова к работе!")
+else:
+    init_db()
