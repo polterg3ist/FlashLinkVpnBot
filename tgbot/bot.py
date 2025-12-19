@@ -11,7 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import BOT_TOKEN, ADMIN_IDS, TRIAL_DAYS
 from database import (
     get_user_by_telegram_id, add_user, update_user_expiry,
-    get_all_users, delete_user_by_email, get_user_by_client_email
+    get_all_users, delete_user_by_email, get_user_by_client_email, get_orphaned_users, validate_and_sync_users
 )
 from vpn_manager import VPNManager
 
@@ -69,6 +69,8 @@ def get_admin_keyboard():
             [InlineKeyboardButton(text="📊 Список пользователей", callback_data="admin_list_users")],
             [InlineKeyboardButton(text="❌ Удалить пользователя", callback_data="admin_delete_user")],
             [InlineKeyboardButton(text="🔄 Продлить пользователю", callback_data="admin_renew_user")],
+            [InlineKeyboardButton(text="🔄 Синхронизировать БД", callback_data="admin_sync_db")],
+            [InlineKeyboardButton(text="📋 Проверить расхождения", callback_data="admin_check_orphans")],
             [InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")],
             [InlineKeyboardButton(text="⬅️ На главную", callback_data="back_to_main")]
         ]
@@ -145,6 +147,18 @@ async def my_account(message: types.Message):
         await message.answer("❌ У вас нет активной подписки. Получите пробную подписку!")
         return
 
+    # Проверяем, существует ли клиент в панели
+    if not vpn_manager.client_exists(user['client_email']):
+        # Клиент не существует - удаляем из БД
+        delete_user_by_email(user['client_email'])
+        await message.answer(
+            "❌ Ваша подписка не найдена в системе.\n"
+            "Возможно, она была удалена администратором.\n\n"
+            "Пожалуйста, создайте новую подписку.",
+            reply_markup=get_main_keyboard(user_id)
+        )
+        return
+
     # Получаем трафик напрямую из панели
     traffic_gb = vpn_manager.get_client_traffic(user['client_email'])
 
@@ -204,6 +218,25 @@ async def process_renewal(callback: types.CallbackQuery):
     days = days_map.get(callback.data)
     if not days:
         await callback.answer("Неверный выбор")
+        return
+
+    user_id = callback.from_user.id
+    user = get_user_by_telegram_id(user_id)
+
+    if not user:
+        await callback.message.answer("❌ У вас нет активной подписки!")
+        await callback.answer()
+        return
+
+    # Проверяем существование клиента
+    if not vpn_manager.client_exists(user['client_email']):
+        delete_user_by_email(user['client_email'])
+        await callback.message.answer(
+            "❌ Ваша подписка не найдена в системе.\n"
+            "Пожалуйста, создайте новую подписку.",
+            reply_markup=get_main_keyboard(user_id)
+        )
+        await callback.answer()
         return
 
     user_id = callback.from_user.id
@@ -565,6 +598,125 @@ async def back_to_main(callback: types.CallbackQuery):
     await callback.message.answer("Вы вернулись в главное меню", reply_markup=get_main_keyboard(user_id))
     await callback.answer()
 
+
+@dp.callback_query(lambda c: c.data == "admin_check_orphans")
+async def admin_check_orphans(callback: types.CallbackQuery):
+    """Проверка расхождений между БД и панелью"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа!")
+        return
+
+    orphaned_users = get_orphaned_users(vpn_manager)
+
+    if not orphaned_users:
+        await callback.message.answer("✅ Расхождений не обнаружено! Все пользователи в БД существуют в панели.")
+        await callback.answer()
+        return
+
+    text = "⚠️ Обнаружены расхождения:\n\n"
+    for i, user in enumerate(orphaned_users, 1):
+        text += f"{i}. Telegram ID: {user['telegram_id']}\n"
+        text += f"   Email: {user['email']}\n"
+        text += f"   UUID: {user['uuid'][:8]}...\n"
+        text += "   ---\n"
+
+    text += f"\nВсего несуществующих пользователей: {len(orphaned_users)}"
+
+    # Создаем клавиатуру для действий
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Автоочистка", callback_data="admin_auto_cleanup")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")]
+        ]
+    )
+
+    await callback.message.answer(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "admin_auto_cleanup")
+async def admin_auto_cleanup(callback: types.CallbackQuery):
+    """Автоматическая очистка несуществующих пользователей"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа!")
+        return
+
+    deleted_users = validate_and_sync_users(vpn_manager)
+
+    if not deleted_users:
+        await callback.message.answer("✅ Нечего удалять. БД уже синхронизирована.")
+    else:
+        text = f"✅ Удалено {len(deleted_users)} несуществующих пользователей:\n\n"
+        for user in deleted_users:
+            text += f"• {user['email']} (Telegram ID: {user['telegram_id']})\n"
+
+        await callback.message.answer(text[:4000])
+
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "admin_sync_db")
+async def admin_sync_db(callback: types.CallbackQuery):
+    """Полная синхронизация БД с панелью"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа!")
+        return
+
+    # Получаем всех пользователей из БД и панели
+    db_users = get_all_users()
+    panel_traffic = vpn_manager.get_all_clients_traffic()
+    panel_emails = set(panel_traffic.keys())
+
+    if not db_users:
+        await callback.message.answer("📭 В БД нет пользователей")
+        await callback.answer()
+        return
+
+    # Создаем отчет
+    text = "🔄 Результаты синхронизации:\n\n"
+
+    # Пользователи только в БД (орфаны)
+    orphaned = []
+    for user in db_users:
+        if user['client_email'] not in panel_emails:
+            orphaned.append(user)
+
+    # Пользователи только в панели (новые, не зарегистрированные в боте)
+    new_in_panel = []
+    for email in panel_emails:
+        found = False
+        for user in db_users:
+            if user['client_email'] == email:
+                found = True
+                break
+        if not found:
+            new_in_panel.append(email)
+
+    # Удаляем орфанов
+    for user in orphaned:
+        delete_user_by_email(user['client_email'])
+
+    text += f"🗑️ Удалено из БД: {len(orphaned)}\n"
+    text += f"🆕 Новых в панели: {len(new_in_panel)}\n"
+    text += f"✅ В синхронизации: {len(db_users) - len(orphaned)}\n"
+    text += f"📊 Всего в панели: {len(panel_emails)}\n\n"
+
+    if orphaned:
+        text += "Удаленные пользователи:\n"
+        for user in orphaned[:10]:  # Показываем только первые 10
+            text += f"• {user['client_email']}\n"
+        if len(orphaned) > 10:
+            text += f"... и еще {len(orphaned) - 10}\n"
+
+    if new_in_panel:
+        text += "\nПользователи в панели, но не в БД:\n"
+        for email in new_in_panel[:10]:
+            text += f"• {email}\n"
+        if len(new_in_panel) > 10:
+            text += f"... и еще {len(new_in_panel) - 10}\n"
+
+    await callback.message.answer(text[:4000])
+    await callback.answer()
 
 # ========== ЗАПУСК БОТА ==========
 async def main():

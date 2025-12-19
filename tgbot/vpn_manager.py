@@ -280,3 +280,40 @@ class VPNManager:
             return 0
         remaining_ms = timestamp_ms - now_ms
         return int(remaining_ms / (24 * 60 * 60 * 1000))
+
+    def client_exists(self, client_email):
+        """Проверяет, существует ли клиент в панели 3x-ui"""
+        try:
+            traffic_data = self.get_all_clients_traffic()
+            return client_email in traffic_data
+        except Exception as e:
+            print(f"Ошибка при проверке существования клиента {client_email}: {e}")
+            return False
+
+    def get_client_info(self, client_email):
+        """Получает полную информацию о клиенте из панели"""
+        try:
+            list_url = f"{self.base_url}/xui/inbound/list"
+            response = self.session.post(list_url)
+            result = response.json()
+
+            if result.get('success'):
+                for inbound in result.get('obj', []):
+                    if inbound.get('id') == INBOUND_ID:
+                        client_stats = inbound.get('clientStats', [])
+                        for client in client_stats:
+                            if client.get('email') == client_email:
+                                # Получаем полные данные из settings
+                                settings = json.loads(inbound.get('settings', '{}'))
+                                settings_clients = settings.get('clients', [])
+                                for settings_client in settings_clients:
+                                    if settings_client.get('email') == client_email:
+                                        return {
+                                            'stats': client,
+                                            'settings': settings_client,
+                                            'exists': True
+                                        }
+        except Exception as e:
+            print(f"Ошибка при получении информации о клиенте {client_email}: {e}")
+
+        return {'exists': False}

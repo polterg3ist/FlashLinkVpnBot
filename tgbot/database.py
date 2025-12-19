@@ -185,6 +185,73 @@ def get_user_by_client_email(client_email):
         print(f"❌ Ошибка при поиске пользователя по email {client_email}: {e}")
         return None
 
+
+def validate_and_sync_users(vpn_manager):
+    """
+    Проверяет пользователей в БД и синхронизирует с панелью 3x-ui.
+    Возвращает список удаленных пользователей.
+    """
+    deleted_users = []
+
+    try:
+        # Получаем всех пользователей из БД
+        db_users = get_all_users()
+        if not db_users:
+            return deleted_users
+
+        # Получаем всех клиентов из панели 3x-ui
+        all_clients_traffic = vpn_manager.get_all_clients_traffic()  # {email: traffic}
+        panel_emails = set(all_clients_traffic.keys())
+
+        # Проверяем каждого пользователя из БД
+        for user in db_users:
+            client_email = user['client_email']
+
+            # Если пользователя нет в панели, удаляем из БД
+            if client_email not in panel_emails:
+                delete_user_by_email(client_email)
+                deleted_users.append({
+                    'telegram_id': user['telegram_id'],
+                    'email': client_email,
+                    'reason': 'Пользователь отсутствует в панели 3x-ui'
+                })
+                print(f"⚠️ Удален несуществующий пользователь: {client_email}")
+
+    except Exception as e:
+        print(f"❌ Ошибка при синхронизации БД с панелью: {e}")
+
+    return deleted_users
+
+
+def get_orphaned_users(vpn_manager):
+    """
+    Получает список пользователей из БД, которых нет в панели 3x-ui
+    (не удаляет их, только проверяет).
+    """
+    orphaned_users = []
+
+    try:
+        db_users = get_all_users()
+        if not db_users:
+            return orphaned_users
+
+        all_clients_traffic = vpn_manager.get_all_clients_traffic()
+        panel_emails = set(all_clients_traffic.keys())
+
+        for user in db_users:
+            if user['client_email'] not in panel_emails:
+                orphaned_users.append({
+                    'telegram_id': user['telegram_id'],
+                    'email': user['client_email'],
+                    'uuid': user['client_uuid']
+                })
+
+    except Exception as e:
+        print(f"❌ Ошибка при поиске несуществующих пользователей: {e}")
+
+    return orphaned_users
+
+
 # Инициализация БД при импорте
 if __name__ == "__main__":
     init_db()
