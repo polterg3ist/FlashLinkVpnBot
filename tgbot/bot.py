@@ -1,9 +1,13 @@
 import asyncio
 import logging
+import os
 import time
-from aiogram import Bot, Dispatcher, types
+import traceback
+from datetime import datetime
+
+from aiogram import Bot, Dispatcher, types, BaseMiddleware
 from aiogram.filters import Command, CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, Update, ErrorEvent
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -15,16 +19,146 @@ from database import (
 )
 from vpn_manager import VPNManager
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
+# Настройка логирования
+LOG_DIR = 'log/'
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_DIR + 'bot.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+# ========== MIDDLEWARE ДЛЯ ОБРАБОТКИ ОШИБОК ==========
+class ErrorLoggingMiddleware(BaseMiddleware):
+    """Middleware для логирования ошибок в обработчиках"""
+
+    async def __call__(self, handler, event: Update, data: dict):
+        try:
+            return await handler(event, data)
+        except Exception as e:
+            # Логируем ошибку
+            self.log_error(e, event)
+
+            # Пытаемся уведомить пользователя
+            await self.notify_user(event, e)
+
+            # Для КРИТИЧЕСКИХ ошибок - передаём дальше (вызовет перезапуск бота)
+            if self.is_critical_error(e):
+                logger.critical("Критическая ошибка! Передаю исключение для перезапуска бота...")
+                raise
+
+            # Для не-критических ошибок - просто логируем и продолжаем
+            return None
+
+    def log_error(self, error: Exception, event: Update):
+        """Логирование ошибки с деталями"""
+        error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Получаем ID пользователя
+        user_id = None
+        if hasattr(event, 'message') and event.message and hasattr(event.message, 'from_user'):
+            user_id = event.message.from_user.id
+        elif hasattr(event, 'callback_query') and event.callback_query:
+            user_id = event.callback_query.from_user.id
+
+        # Формируем сообщение об ошибке
+        error_msg = (
+            f"\n{'=' * 80}\n"
+            f"🚨 ОШИБКА В ОБРАБОТЧИКЕ\n"
+            f"{'=' * 80}\n"
+            f"⏰ Время: {error_time}\n"
+            f"👤 Пользователь ID: {user_id if user_id else 'N/A'}\n"
+            f"🚨 Тип ошибки: {type(error).__name__}\n"
+            f"📝 Сообщение: {str(error)}\n"
+            f"📋 Трейсбэк:\n{traceback.format_exc()}\n"
+            f"{'=' * 80}"
+        )
+
+        logger.error(error_msg)
+
+        # Сохраняем в файл
+        with open(LOG_DIR + 'handler_errors_detailed.log', 'a', encoding='utf-8') as f:
+            f.write(error_msg)
+
+    async def notify_user(self, event: Update, error: Exception):
+        """Уведомление пользователя об ошибке"""
+        try:
+            if hasattr(event, 'message') and event.message:
+                await event.message.answer(
+                    "😕 Упс! Произошла техническая ошибка.\n"
+                    "Мы уже работаем над её исправлением.\n"
+                    "Попробуйте ещё раз через несколько минут."
+                )
+            elif hasattr(event, 'callback_query') and event.callback_query:
+                await event.callback_query.message.answer(
+                    "😕 Упс! Произошла техническая ошибка.\n"
+                    "Мы уже работаем над её исправлением."
+                )
+                await event.callback_query.answer()
+        except Exception as e:
+            logger.error(f"Не удалось уведомить пользователя: {e}")
+
+    def is_critical_error(self, error: Exception) -> bool:
+        """Определяем, является ли ошибка критической"""
+        critical_errors = (
+            ZeroDivisionError,
+            MemoryError,
+            SystemExit,
+            KeyboardInterrupt,
+            GeneratorExit,
+            asyncio.CancelledError
+        )
+
+        # Также считаем критическими ошибки подключения к базе данных
+        error_msg = str(error).lower()
+        db_keywords = ['database', 'sqlite', 'connection', 'timeout', 'lost connection']
+
+        if any(keyword in error_msg for keyword in db_keywords):
+            return True
+
+        return isinstance(error, critical_errors)
+
+# ========== СОЗДАНИЕ БОТА И ДИСПЕТЧЕРА ==========
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
-
-# Инициализация менеджера VPN
 vpn_manager = VPNManager()
+
+# Регистрируем middleware
+dp.update.outer_middleware(ErrorLoggingMiddleware())
+
+# ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК AIOGRAM ==========
+@dp.error()
+async def error_handler(error_event: ErrorEvent):
+    """Глобальный обработчик ошибок aiogram"""
+    error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    error_msg = (
+        f"\n{'=' * 80}\n"
+        f"🌐 ГЛОБАЛЬНАЯ ОШИБКА AIOGRAM\n"
+        f"{'=' * 80}\n"
+        f"⏰ Время: {error_time}\n"
+        f"🚨 Тип: {type(error_event.exception).__name__}\n"
+        f"📝 Сообщение: {str(error_event.exception)}\n"
+        f"📋 Трейсбэк:\n{traceback.format_exc()}\n"
+        f"{'=' * 80}"
+    )
+
+    logger.error(error_msg)
+
+    # Сохраняем в файл
+    with open(LOG_DIR + 'aiogram_global_errors.log', 'a', encoding='utf-8') as f:
+        f.write(error_msg)
+
+    return True
 
 
 # Состояния для FSM
@@ -718,11 +852,79 @@ async def admin_sync_db(callback: types.CallbackQuery):
     await callback.message.answer(text[:4000])
     await callback.answer()
 
-# ========== ЗАПУСК БОТА ==========
+
+# ========== ОСНОВНАЯ ФУНКЦИЯ С ПЕРЕЗАПУСКОМ ==========
 async def main():
-    print("Бот запущен!")
-    await dp.start_polling(bot)
+    max_restarts = 10
+    restart_delay = 5
+    restart_count = 0
+
+    logger.info("=" * 50)
+    logger.info("🚀 ИНИЦИАЛИЗАЦИЯ VPN БОТА")
+    logger.info("=" * 50)
+
+    while restart_count < max_restarts:
+        try:
+            logger.info(f"▶️ ЗАПУСК БОТА (попытка {restart_count + 1}/{max_restarts})")
+
+            # Запускаем polling
+            await dp.start_polling(bot)
+
+            # Если дошли сюда - бот завершился нормально
+            logger.info("✅ Бот завершил работу нормально")
+            break
+
+        except asyncio.CancelledError:
+            logger.info("⏹️ Работа бота завершена")
+            break
+
+        except KeyboardInterrupt:
+            logger.info("⏹️ Бот остановлен пользователем (Ctrl+C)")
+            break
+
+        except Exception as e:
+            restart_count += 1
+            error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Логируем ошибку основного цикла
+            logger.critical(f"\n💥 КРИТИЧЕСКАЯ ОШИБКА В ОСНОВНОМ ЦИКЛЕ:")
+            logger.critical(f"⏰ Время: {error_time}")
+            logger.critical(f"🚨 Тип: {type(e).__name__}")
+            logger.critical(f"📝 Сообщение: {str(e)}")
+            logger.critical(f"📋 Трейсбэк:\n{traceback.format_exc()}")
+
+            # Сохраняем в файл
+            with open(LOG_DIR + 'main_loop_crashes.log', 'a', encoding='utf-8') as f:
+                f.write(f"\n{'=' * 80}\n")
+                f.write(f"Время: {error_time}\n")
+                f.write(f"Попытка: {restart_count}/{max_restarts}\n")
+                f.write(f"Ошибка: {type(e).__name__}: {str(e)}\n")
+                f.write(f"Трейсбэк:\n{traceback.format_exc()}\n")
+                f.write(f"{'=' * 80}\n")
+
+            if restart_count < max_restarts:
+                # Экспоненциальная задержка
+                restart_delay = min(restart_delay * 1.5, 60)
+                logger.warning(f"🔄 Перезапуск через {restart_delay:.1f} секунд...")
+
+                # Очистка ресурсов
+                try:
+                    await bot.session.close()
+                except:
+                    pass
+
+                await asyncio.sleep(restart_delay)
+            else:
+                logger.critical(f"❌ Достигнут лимит перезапусков ({max_restarts})")
+                break
 
 
+# ========== ЗАПУСК ==========
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n✅ Бот остановлен")
+    except Exception as e:
+        print(f"\n❌ Фатальная ошибка при запуске: {e}")
+        traceback.print_exc()
