@@ -20,16 +20,24 @@ from database import (
 from vpn_manager import VPNManager
 
 
-# Настройка логирования
+# ========== НАСТРОЙКА ПАПКИ ДЛЯ ЛОГОВ ==========
 LOG_DIR = 'log/'
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
+    print(f"✅ Создана папка для логов: {LOG_DIR}")
 
+# Файлы логов
+BOT_LOG_FILE = os.path.join(LOG_DIR, 'bot.log')
+HANDLER_ERRORS_FILE = os.path.join(LOG_DIR, 'handler_errors.log')
+MAIN_LOOP_CRASHES_FILE = os.path.join(LOG_DIR, 'main_loop_crashes.log')
+AIOGRAM_ERRORS_FILE = os.path.join(LOG_DIR, 'aiogram_errors.log')
+
+# ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(LOG_DIR + 'bot.log', encoding='utf-8'),
+        logging.FileHandler(BOT_LOG_FILE, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -45,7 +53,7 @@ class ErrorLoggingMiddleware(BaseMiddleware):
             return await handler(event, data)
         except Exception as e:
             # Логируем ошибку
-            self.log_error(e, event)
+            await self.log_error(e, event)
 
             # Пытаемся уведомить пользователя
             await self.notify_user(event, e)
@@ -58,7 +66,7 @@ class ErrorLoggingMiddleware(BaseMiddleware):
             # Для не-критических ошибок - просто логируем и продолжаем
             return None
 
-    def log_error(self, error: Exception, event: Update):
+    async def log_error(self, error: Exception, event: Update):
         """Логирование ошибки с деталями"""
         error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -85,7 +93,7 @@ class ErrorLoggingMiddleware(BaseMiddleware):
         logger.error(error_msg)
 
         # Сохраняем в файл
-        with open(LOG_DIR + 'handler_errors_detailed.log', 'a', encoding='utf-8') as f:
+        with open(HANDLER_ERRORS_FILE, 'a', encoding='utf-8') as f:
             f.write(error_msg)
 
     async def notify_user(self, event: Update, error: Exception):
@@ -109,19 +117,26 @@ class ErrorLoggingMiddleware(BaseMiddleware):
     def is_critical_error(self, error: Exception) -> bool:
         """Определяем, является ли ошибка критической"""
         critical_errors = (
-            ZeroDivisionError,
-            MemoryError,
-            SystemExit,
-            KeyboardInterrupt,
-            GeneratorExit,
-            asyncio.CancelledError
+            ZeroDivisionError,  # Деление на ноль
+            MemoryError,  # Проблемы с памятью
+            SystemExit,  # Выход из системы
+            KeyboardInterrupt,  # Прерывание клавиатурой
+            GeneratorExit,  # Выход из генератора
+            asyncio.CancelledError,  # Отмененная задача
+            ConnectionError,  # Ошибки соединения
+            TimeoutError,  # Таймауты
+            OSError,  # Ошибки ОС
         )
 
-        # Также считаем критическими ошибки подключения к базе данных
+        # Также считаем критическими ошибки подключения к базе данных или API
         error_msg = str(error).lower()
-        db_keywords = ['database', 'sqlite', 'connection', 'timeout', 'lost connection']
+        critical_keywords = [
+            'database', 'sqlite', 'connection', 'timeout',
+            'lost connection', 'operationalerror', 'api',
+            'network', 'socket', 'connection refused'
+        ]
 
-        if any(keyword in error_msg for keyword in db_keywords):
+        if any(keyword in error_msg for keyword in critical_keywords):
             return True
 
         return isinstance(error, critical_errors)
@@ -135,6 +150,7 @@ vpn_manager = VPNManager()
 # Регистрируем middleware
 dp.update.outer_middleware(ErrorLoggingMiddleware())
 
+# ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК AIOGRAM ==========
 # ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК AIOGRAM ==========
 @dp.error()
 async def error_handler(error_event: ErrorEvent):
@@ -155,7 +171,7 @@ async def error_handler(error_event: ErrorEvent):
     logger.error(error_msg)
 
     # Сохраняем в файл
-    with open(LOG_DIR + 'aiogram_global_errors.log', 'a', encoding='utf-8') as f:
+    with open(AIOGRAM_ERRORS_FILE, 'a', encoding='utf-8') as f:
         f.write(error_msg)
 
     return True
@@ -855,13 +871,24 @@ async def admin_sync_db(callback: types.CallbackQuery):
 
 # ========== ОСНОВНАЯ ФУНКЦИЯ С ПЕРЕЗАПУСКОМ ==========
 async def main():
+    """Основная функция с защитой от падений и улучшенным логированием"""
     max_restarts = 10
     restart_delay = 5
     restart_count = 0
+    start_time = datetime.now()
+
+    # Файл для статистики перезапусков
+    STATS_FILE = os.path.join(LOG_DIR, 'restart_stats.log')
 
     logger.info("=" * 50)
-    logger.info("🚀 ИНИЦИАЛИЗАЦИЯ VPN БОТА")
+    logger.info(f"🚀 ИНИЦИАЛИЗАЦИЯ VPN БОТА - {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 50)
+
+    # Записываем статистику запуска
+    with open(STATS_FILE, 'a', encoding='utf-8') as f:
+        f.write(f"\n{'=' * 60}\n")
+        f.write(f"НОВЫЙ ЗАПУСК БОТА: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"{'=' * 60}\n")
 
     while restart_count < max_restarts:
         try:
@@ -872,10 +899,16 @@ async def main():
 
             # Если дошли сюда - бот завершился нормально
             logger.info("✅ Бот завершил работу нормально")
+
+            # Записываем успешное завершение
+            with open(STATS_FILE, 'a', encoding='utf-8') as f:
+                f.write(f"✅ Бот завершен: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"   Всего перезапусков: {restart_count}\n")
+
             break
 
         except asyncio.CancelledError:
-            logger.info("⏹️ Работа бота завершена")
+            logger.info("⏹️ Работа бота завершена (CancelledError)")
             break
 
         except KeyboardInterrupt:
@@ -893,14 +926,20 @@ async def main():
             logger.critical(f"📝 Сообщение: {str(e)}")
             logger.critical(f"📋 Трейсбэк:\n{traceback.format_exc()}")
 
-            # Сохраняем в файл
-            with open(LOG_DIR + 'main_loop_crashes.log', 'a', encoding='utf-8') as f:
+            # Сохраняем в файл ошибок основного цикла
+            with open(MAIN_LOOP_CRASHES_FILE, 'a', encoding='utf-8') as f:
                 f.write(f"\n{'=' * 80}\n")
                 f.write(f"Время: {error_time}\n")
-                f.write(f"Попытка: {restart_count}/{max_restarts}\n")
+                f.write(f"Попытка перезапуска: {restart_count}/{max_restarts}\n")
                 f.write(f"Ошибка: {type(e).__name__}: {str(e)}\n")
                 f.write(f"Трейсбэк:\n{traceback.format_exc()}\n")
                 f.write(f"{'=' * 80}\n")
+
+            # Записываем статистику перезапуска
+            with open(STATS_FILE, 'a', encoding='utf-8') as f:
+                f.write(f"🔄 Перезапуск #{restart_count}: {error_time}\n")
+                f.write(f"   Ошибка: {type(e).__name__}\n")
+                f.write(f"   Задержка: {restart_delay:.1f} сек\n")
 
             if restart_count < max_restarts:
                 # Экспоненциальная задержка
@@ -910,12 +949,28 @@ async def main():
                 # Очистка ресурсов
                 try:
                     await bot.session.close()
-                except:
-                    pass
+                except Exception as cleanup_error:
+                    logger.error(f"Ошибка при очистке сессии: {cleanup_error}")
 
+                # Ждем перед перезапуском
                 await asyncio.sleep(restart_delay)
+
+                # Логируем успешный перезапуск
+                logger.info(f"🔄 Перезапуск {restart_count} выполнен успешно")
             else:
                 logger.critical(f"❌ Достигнут лимит перезапусков ({max_restarts})")
+
+                # Записываем финальную статистику
+                end_time = datetime.now()
+                uptime = end_time - start_time
+
+                with open(STATS_FILE, 'a', encoding='utf-8') as f:
+                    f.write(f"\n❌ ЛИМИТ ПЕРЕЗАПУСКОВ ДОСТИГНУТ\n")
+                    f.write(f"Время работы: {uptime}\n")
+                    f.write(f"Финальное время: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"Причина остановки: {type(e).__name__}: {str(e)[:200]}\n")
+                    f.write(f"{'=' * 60}\n")
+
                 break
 
 
