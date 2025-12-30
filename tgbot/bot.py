@@ -15,9 +15,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import BOT_TOKEN, ADMIN_IDS, TRIAL_DAYS
 from database import (
     get_user_by_telegram_id, add_user, update_user_expiry,
-    get_all_users, delete_user_by_email, get_user_by_client_email, get_orphaned_users, validate_and_sync_users
+    get_all_users, delete_user_by_email, get_user_by_client_email, get_orphaned_users, validate_and_sync_users,
+    create_payment, get_user_payments
 )
 from vpn_manager import VPNManager
+
+from yookassa_payments import yookassa
+from config import SUBSCRIPTION_PRICES, YOOKASSA_RETURN_URL
 
 
 # ========== НАСТРОЙКА ПАПКИ ДЛЯ ЛОГОВ ==========
@@ -189,24 +193,23 @@ class AdminStates(StatesGroup):
 
 
 # ========== КЛАВИАТУРЫ ==========
-def get_main_keyboard(telegram_id):
+def get_user_keyboard(telegram_id):
     """Основная клавиатура"""
     user = get_user_by_telegram_id(telegram_id)
-    is_admin = telegram_id in ADMIN_IDS
 
     keyboard_buttons = []
 
-    # Если у пользователя нет аккаунта, показываем кнопку получения подписки
-    if not user:
-        keyboard_buttons.append([KeyboardButton(text="🎁 Получить пробную подписку")])
-    else:
-        # Если аккаунт есть, показываем стандартные кнопки
+    if user:
         keyboard_buttons.extend([
             [KeyboardButton(text="👤 Мой аккаунт")],
-            [KeyboardButton(text="🔄 Продлить подписку")]
+            [KeyboardButton(text="💰 Купить подписку")],
+            [KeyboardButton(text="🔄 Продлить подписку")],
+            [KeyboardButton(text="📊 Мои платежи")]
         ])
+    else:
+        keyboard_buttons.append([KeyboardButton(text="🎁 Получить пробную подписку")])
 
-    if is_admin:
+    if telegram_id in ADMIN_IDS:
         keyboard_buttons.append([KeyboardButton(text="👑 Админ-панель")])
 
     return ReplyKeyboardMarkup(keyboard=keyboard_buttons, resize_keyboard=True)
@@ -240,7 +243,7 @@ async def cmd_start(message: types.Message):
         "🌍 Доступ к любым сайтам и сервисам"
     )
 
-    await message.answer(welcome_text, reply_markup=get_main_keyboard(user_id))
+    await message.answer(welcome_text, reply_markup=get_user_keyboard(user_id))
 
 
 @dp.message(lambda message: message.text == "🎁 Получить пробную подписку")
@@ -282,10 +285,172 @@ async def get_trial_subscription(message: types.Message):
         await message.answer(success_text, parse_mode="HTML")
         # Обновляем клавиатуру (убираем кнопку получения подписки)
         await message.answer("Теперь вы можете перейти в 'Мой аккаунт' для просмотра деталей.",
-                             reply_markup=get_main_keyboard(user_id))
+                             reply_markup=get_user_keyboard(user_id))
     else:
         await message.answer(f"❌ Ошибка при создании подписки: {result.get('error', 'Неизвестная ошибка')}")
 
+
+# Обработчик кнопки "💰 Купить подписку"
+@dp.message(lambda message: message.text == "💰 Купить подписку")
+async def buy_subscription_start(message: types.Message):
+    """Начало покупки подписки"""
+    user_id = message.from_user.id
+
+    # Инлайн-клавиатура с тарифами
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="30 дней - 299₽", callback_data="buy_30"),
+                InlineKeyboardButton(text="90 дней - 799₽", callback_data="buy_90")
+            ],
+            [
+                InlineKeyboardButton(text="180 дней - 1499₽", callback_data="buy_180"),
+                InlineKeyboardButton(text="365 дней - 2699₽", callback_data="buy_365")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
+        ]
+    )
+
+    await message.answer(
+        "🎯 Выберите тариф подписки:\n\n"
+        "• 30 дней - 299₽\n"
+        "• 90 дней - 799₽ (экономьте 66₽ в месяц!)\n"
+        "• 180 дней - 1499₽ (экономьте 83₽ в месяц!)\n"
+        "• 365 дней - 2699₽ (экономьте 92₽ в месяц!)\n\n"
+        "💳 Оплата через Яндекс Кассу (карты, ЮMoney и др.)",
+        reply_markup=keyboard
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith('buy_'))
+async def process_payment_start(callback: types.CallbackQuery):
+    """Обработка выбора тарифа и создание платежа"""
+    days_map = {
+        'buy_30': 30,
+        'buy_90': 90,
+        'buy_180': 180,
+        'buy_365': 365
+    }
+
+    days = days_map.get(callback.data)
+    if not days:
+        await callback.answer("Неверный выбор")
+        return
+
+    user_id = callback.from_user.id
+    amount = SUBSCRIPTION_PRICES.get(days, 299)
+
+    # Создаем описание платежа
+    description = f"VPN подписка на {days} дней для пользователя {user_id}"
+
+    # Метаданные для вебхука
+    metadata = {
+        "user_id": user_id,
+        "days": days,
+        "telegram_username": callback.from_user.username or "",
+        "telegram_first_name": callback.from_user.first_name or ""
+    }
+
+    # Создаем платеж в ЮKassa
+    payment_result = await yookassa.create_payment(
+        amount=amount,
+        description=description,
+        return_url=YOOKASSA_RETURN_URL,
+        metadata=metadata
+    )
+
+    if payment_result['success']:
+        # Сохраняем платеж в БД
+        payment_id = payment_result['payment_id']
+        create_payment(user_id, payment_id, amount * 100, days, description)    # database.py function
+
+        # Отправляем пользователю ссылку для оплаты
+        confirmation_url = payment_result['confirmation_url']
+
+        payment_message = (
+            f"✅ Платеж создан!\n\n"
+            f"📅 Тариф: {days} дней\n"
+            f"💰 Сумма: {amount}₽\n"
+            f"📝 Описание: {description}\n\n"
+            f"Для оплаты перейдите по ссылке:\n{confirmation_url}\n\n"
+            f"После оплаты подписка активируется автоматически в течение 1-2 минут."
+        )
+
+        # Инлайн-кнопка для перехода к оплате
+        payment_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Перейти к оплате", url=confirmation_url)],
+                [InlineKeyboardButton(text="🔄 Проверить статус", callback_data=f"check_payment_{payment_id}")]
+            ]
+        )
+
+        await callback.message.answer(payment_message, reply_markup=payment_keyboard)
+    else:
+        await callback.message.answer(
+            f"❌ Ошибка при создании платежа:\n{payment_result.get('error', 'Неизвестная ошибка')}"
+        )
+
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data.startswith('check_payment_'))
+async def check_payment_status(callback: types.CallbackQuery):
+    """Проверка статуса платежа по кнопке"""
+    payment_id = callback.data.replace('check_payment_', '')
+
+    # Получаем статус платежа
+    status_result = await yookassa.get_payment_status(payment_id)
+
+    if status_result['success']:
+        status = status_result['status']
+
+        if status == 'succeeded':
+            await callback.message.answer("✅ Платеж успешно завершен! Подписка активирована.")
+        elif status == 'pending':
+            await callback.message.answer("⏳ Платеж в обработке. Пожалуйста, подождите...")
+        elif status == 'canceled':
+            await callback.message.answer("❌ Платеж отменен.")
+        else:
+            await callback.message.answer(f"Статус платежа: {status}")
+    else:
+        await callback.message.answer("❌ Не удалось проверить статус платежа.")
+
+    await callback.answer()
+
+
+# Обработчик "📊 Мои платежи"
+@dp.message(lambda message: message.text == "📊 Мои платежи")
+async def my_payments(message: types.Message):
+    """Показать историю платежей пользователя"""
+    user_id = message.from_user.id
+    payments = get_user_payments(user_id, limit=10)     # database.py function
+
+    if not payments:
+        await message.answer("📭 У вас пока нет платежей.")
+        return
+
+    text = "📊 Ваши последние платежи:\n\n"
+
+    for i, payment in enumerate(payments, 1):
+        amount_rub = payment['amount'] / 100
+        status_emoji = {
+            'succeeded': '✅',
+            'pending': '⏳',
+            'canceled': '❌'
+        }.get(payment['status'], '❓')
+
+        created = datetime.fromisoformat(payment['created_at'].replace('Z', '+00:00'))
+        created_str = created.strftime('%d.%m.%Y %H:%M')
+
+        text += (
+            f"{i}. {status_emoji} {amount_rub}₽ за {payment['days']} дней\n"
+            f"   Статус: {payment['status']}\n"
+            f"   Дата: {created_str}\n"
+            f"   ID: {payment['payment_id'][:8]}...\n"
+            f"   ---\n"
+        )
+
+    await message.answer(text)
 
 @dp.message(lambda message: message.text == "👤 Мой аккаунт")
 async def my_account(message: types.Message):
@@ -305,7 +470,7 @@ async def my_account(message: types.Message):
             "❌ Ваша подписка не найдена в системе.\n"
             "Возможно, она была удалена администратором.\n\n"
             "Пожалуйста, создайте новую подписку.",
-            reply_markup=get_main_keyboard(user_id)
+            reply_markup=get_user_keyboard(user_id)
         )
         return
 
@@ -384,7 +549,7 @@ async def process_renewal(callback: types.CallbackQuery):
         await callback.message.answer(
             "❌ Ваша подписка не найдена в системе.\n"
             "Пожалуйста, создайте новую подписку.",
-            reply_markup=get_main_keyboard(user_id)
+            reply_markup=get_user_keyboard(user_id)
         )
         await callback.answer()
         return
@@ -745,7 +910,7 @@ async def back_to_main(callback: types.CallbackQuery):
     """Возврат на главную"""
     user_id = callback.from_user.id
     await callback.message.edit_text("Главное меню")
-    await callback.message.answer("Вы вернулись в главное меню", reply_markup=get_main_keyboard(user_id))
+    await callback.message.answer("Вы вернулись в главное меню", reply_markup=get_user_keyboard(user_id))
     await callback.answer()
 
 

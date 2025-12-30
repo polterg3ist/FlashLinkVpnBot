@@ -50,17 +50,27 @@ def init_db():
             )
             ''')
 
-            # Таблица транзакций (для будущей оплаты)
+            # таблица с оплатами:
             cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transactions (
+            CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                amount INTEGER,
-                status TEXT DEFAULT 'pending',
+                user_id INTEGER NOT NULL,
+                payment_id TEXT UNIQUE NOT NULL,  # ID платежа в ЮKassa
+                amount INTEGER NOT NULL,          # Сумма в копейках
+                currency TEXT DEFAULT 'RUB',
+                status TEXT DEFAULT 'pending',    # pending, succeeded, canceled
+                description TEXT,                 # Описание платежа
+                days INTEGER NOT NULL,            # Количество дней подписки
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (id)
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (telegram_id)
             )
             ''')
+
+            # Индексы для быстрого поиска
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments (user_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_payments_payment_id ON payments (payment_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_payments_status ON payments (status)')
 
             # Создаем индекс для быстрого поиска по telegram_id
             cursor.execute('''
@@ -250,6 +260,68 @@ def get_orphaned_users(vpn_manager):
         print(f"❌ Ошибка при поиске несуществующих пользователей: {e}")
 
     return orphaned_users
+
+
+# ОПЛАТА
+def create_payment(user_id, payment_id, amount, days, description=""):
+    """Создание записи о платеже"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            INSERT INTO payments (user_id, payment_id, amount, days, description, status)
+            VALUES (?, ?, ?, ?, ?, 'pending')
+            ''', (user_id, payment_id, amount, days, description))
+            conn.commit()
+            return cursor.lastrowid
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при создании платежа: {e}")
+        return None
+
+def update_payment_status(payment_id, status):
+    """Обновление статуса платежа"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            UPDATE payments 
+            SET status = ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE payment_id = ?
+            ''', (status, payment_id))
+            conn.commit()
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при обновлении платежа: {e}")
+        return False
+
+def get_payment_by_id(payment_id):
+    """Получение платежа по ID"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM payments WHERE payment_id = ?', (payment_id,))
+            payment = cursor.fetchone()
+            return dict(payment) if payment else None
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при получении платежа: {e}")
+        return None
+
+def get_user_payments(user_id, limit=10):
+    """Получение платежей пользователя"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            SELECT * FROM payments 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC 
+            LIMIT ?
+            ''', (user_id, limit))
+            payments = cursor.fetchall()
+            return [dict(payment) for payment in payments]
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при получении платежей пользователя: {e}")
+        return []
 
 
 # Инициализация БД при импорте

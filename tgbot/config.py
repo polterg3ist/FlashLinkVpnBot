@@ -11,10 +11,33 @@ ADMIN_IDS = [848651169, 618227002]  # Замените на ваши Telegram ID
 
 # Настройки 3x-ui
 
+# Панель
 PANEL_HOST = os.getenv("PANEL_HOST")
 PANEL_USERNAME = os.getenv("PANEL_USERNAME")
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD")
 INBOUND_ID = 6
+
+# ЮКасса
+YOOKASSA_SHOP_ID=os.getenv("YOOKASSA_SHOP_ID")
+YOOKASSA_SECRET_KEY=os.getenv("YOOKASSA_SECRET_KEY")
+YOOKASSA_API_KEY=os.getenv("YOOKASSA_API_KEY")
+# URL для возврата после оплаты (Telegram Deep Link или ваш сайт)
+YOOKASSA_RETURN_URL = "https://t.me/flashlinkvpntestbot?start=payment_success"
+
+# URL для вебхуков (должен быть HTTPS!)
+YOOKASSA_WEBHOOK_URL = "https://y648958.leadteh.ru/webhooks/yandex_kassa/aLQdUTeoNZ7IDkJsmTbM4rDlUMKxOf4yZtggE7TwHxJqZanusvlpFzmLRhoyOr2pajh5cOcRt01XNZymTDjbWfps96"
+
+# Текущий режим (sandbox или production)
+YOOKASSA_MODE = "sandbox"  # Поменяйте на "production" для реальных платежей
+
+# Тарифы подписок (в рублях)
+SUBSCRIPTION_PRICES = {
+    30: 299,    # 30 дней - 299 руб
+    90: 799,    # 90 дней - 799 руб
+    180: 1499,  # 180 дней - 1499 руб
+    365: 2699   # 365 дней - 2699 руб
+}
+
 
 # Настройки подписок
 TRIAL_DAYS = 14  # Длительность пробной подписки
