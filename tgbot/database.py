@@ -55,12 +55,12 @@ def init_db():
             CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                payment_id TEXT UNIQUE NOT NULL,  # ID платежа в ЮKassa
-                amount INTEGER NOT NULL,          # Сумма в копейках
+                payment_id TEXT UNIQUE NOT NULL,
+                amount INTEGER NOT NULL,
                 currency TEXT DEFAULT 'RUB',
-                status TEXT DEFAULT 'pending',    # pending, succeeded, canceled
-                description TEXT,                 # Описание платежа
-                days INTEGER NOT NULL,            # Количество дней подписки
+                status TEXT DEFAULT 'pending',
+                description TEXT,
+                days INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (telegram_id)

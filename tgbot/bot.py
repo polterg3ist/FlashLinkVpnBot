@@ -155,7 +155,6 @@ vpn_manager = VPNManager()
 dp.update.outer_middleware(ErrorLoggingMiddleware())
 
 # ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК AIOGRAM ==========
-# ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК AIOGRAM ==========
 @dp.error()
 async def error_handler(error_event: ErrorEvent):
     """Глобальный обработчик ошибок aiogram"""

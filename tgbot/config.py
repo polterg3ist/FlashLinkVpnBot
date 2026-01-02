@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from yookassa import Configuration
 
 load_dotenv()
 
@@ -25,10 +26,16 @@ YOOKASSA_API_KEY=os.getenv("YOOKASSA_API_KEY")
 YOOKASSA_RETURN_URL = "https://t.me/flashlinkvpntestbot?start=payment_success"
 
 # URL для вебхуков (должен быть HTTPS!)
-YOOKASSA_WEBHOOK_URL = "https://y648958.leadteh.ru/webhooks/yandex_kassa/aLQdUTeoNZ7IDkJsmTbM4rDlUMKxOf4yZtggE7TwHxJqZanusvlpFzmLRhoyOr2pajh5cOcRt01XNZymTDjbWfps96"
+YOOKASSA_WEBHOOK_URL = "https://oddly-compatible-guanaco.cloudpub.ru:443/webhook/yookassa"
 
 # Текущий режим (sandbox или production)
 YOOKASSA_MODE = "sandbox"  # Поменяйте на "production" для реальных платежей
+
+# ==== Настройка официальной библиотеки ЮKassa ====
+
+# Передаём данные магазина в библиотеку
+Configuration.account_id = YOOKASSA_SHOP_ID
+Configuration.secret_key = YOOKASSA_API_KEY  # Используем API_KEY
 
 # Тарифы подписок (в рублях)
 SUBSCRIPTION_PRICES = {
@@ -37,7 +44,6 @@ SUBSCRIPTION_PRICES = {
     180: 1499,  # 180 дней - 1499 руб
     365: 2699   # 365 дней - 2699 руб
 }
-
 
 # Настройки подписок
 TRIAL_DAYS = 14  # Длительность пробной подписки
