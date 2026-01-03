@@ -8,7 +8,7 @@ from aiogram import Bot
 
 # Импортируем наши модули
 from yookassa_payments import yookassa
-from database import get_payment_by_id, update_payment_status, get_user_by_telegram_id, update_user_expiry
+from database import get_payment_by_id, update_payment_status, get_user_by_telegram_id, update_user_expiry, add_user
 from vpn_manager import VPNManager
 from config import BOT_TOKEN
 import asyncio
@@ -74,8 +74,6 @@ def init_bot(token: str):
 
 
 from yookassa import Configuration, Webhook
-
-
 
 
 @app.post("/webhook/yookassa")
@@ -171,8 +169,29 @@ async def handle_payment_succeeded(payment_id: str, payment_data: dict):
         user = get_user_by_telegram_id(user_id)
 
         if not user:
-            webhook_logger.error(f"Пользователь {user_id} не найден для платежа {payment_id}")
-            return
+            # ПОЛЬЗОВАТЕЛЯ НЕТ. Нужно его создать.
+            webhook_logger.info(f"Пользователь {user_id} не найден в БД. Создаем для него аккаунт...")
+
+            # 1. Создаем клиента в 3x-ui
+            # Можно задать email_prefix, например, 'paid_user'
+            result = vpn_manager.create_client(days=days, email_prefix=f"without_test_sub_tgID-{user_id}")
+
+            if not result['success']:
+                webhook_logger.error(f"Не удалось создать клиента в панели для {user_id}: {result.get('error')}")
+                return
+
+            # 2. Сохраняем нового пользователя в БД
+            add_user(
+                telegram_id=user_id,
+                client_email=result['email'],
+                client_uuid=result['uuid'],
+                sub_id=result['sub_id'],
+                expiry_time=result['expiry_time']
+            )
+            webhook_logger.info(f"В БД добавлен новый пользователь: {result['email']}")
+
+            # 3. Теперь получаем его запись из БД для дальнейшей обработки
+            user = get_user_by_telegram_id(user_id)
 
         # Рассчитываем новый срок подписки
         current_time = int(datetime.now().timestamp() * 1000)
@@ -209,20 +228,25 @@ async def send_telegram_notification(user_id: int, payment_id: str, days: int):
             webhook_logger.error("Бот не инициализирован!")
             return
 
+        user = get_user_by_telegram_id(user_id)
+        vpn_link = vpn_manager.generate_vpn_link(user['client_uuid'], user['client_email'])
         message = (
             f"✅ Платеж успешно завершен!\n"
             f"📋 ID платежа: {payment_id}\n"
             f"📅 Добавлено дней: {days}\n"
-            f"Ваша подписка продлена. Спасибо за оплату!"
+            f"Ваша подписка продлена. Спасибо за оплату!\n\n"
+            f"🔗 Ваша ссылка для подключения:\n"
+            f"<code>{vpn_link}</code>\n\n"
+            f"Используйте кнопку '👤 Мой аккаунт', чтобы посмотреть детали."
         )
 
-        await bot.send_message(chat_id=user_id, text=message)
+        await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML")
         webhook_logger.info(f"Уведомление отправлено пользователю {user_id}")
 
     except Exception as e:
         webhook_logger.error(f"Ошибка при отправке уведомления в Telegram: {e}")
         # Записываем в файл как fallback
-        with open('payment_notifications.log', 'a', encoding='utf-8') as f:
+        with open(LOG_DIR + 'payment_notifications.log', 'a', encoding='utf-8') as f:
             f.write(f"{datetime.now()} - User {user_id} - Payment {payment_id} - {days} дней - ERROR: {e}\n")
 
 

@@ -202,7 +202,6 @@ def get_user_keyboard(telegram_id):
         keyboard_buttons.extend([
             [KeyboardButton(text="👤 Мой аккаунт")],
             [KeyboardButton(text="💰 Купить подписку")],
-            [KeyboardButton(text="🔄 Продлить подписку")],
             [KeyboardButton(text="📊 Мои платежи")]
         ])
     else:
@@ -489,102 +488,102 @@ async def my_account(message: types.Message):
         f"⏳ Срок действия: {expiry_date}\n"
         f"📅 Осталось дней: {days_left}\n"
         f"📊 Трафик: {traffic_gb:.2f} GB\n\n"
-        f"🔗 Ваша ссылка для подключения:\n"
+        f"🔗 Ваша ссылка для подключения (нажмите чтобы скопировать):\n"
         f"<code>{vpn_link}</code>"
     )
 
     await message.answer(account_text, parse_mode="HTML")
 
 
-@dp.message(lambda message: message.text == "🔄 Продлить подписку")
-async def renew_subscription_start(message: types.Message, state: FSMContext):
-    """Начало процесса продления подписки"""
-    user_id = message.from_user.id
-    user = get_user_by_telegram_id(user_id)
+# @dp.message(lambda message: message.text == "🔄 Продлить подписку")
+# async def renew_subscription_start(message: types.Message, state: FSMContext):
+#     """Начало процесса продления подписки"""
+#     user_id = message.from_user.id
+#     user = get_user_by_telegram_id(user_id)
+#
+#     if not user:
+#         await message.answer("❌ У вас нет активной подписки!")
+#         return
+#
+#     # Показываем варианты продления (без оплаты)
+#     keyboard = InlineKeyboardMarkup(
+#         inline_keyboard=[
+#             [InlineKeyboardButton(text="30 дней", callback_data="renew_30")],
+#             [InlineKeyboardButton(text="90 дней", callback_data="renew_90")],
+#             [InlineKeyboardButton(text="180 дней", callback_data="renew_180")],
+#             [InlineKeyboardButton(text="365 дней", callback_data="renew_365")]
+#         ]
+#     )
+#
+#     await message.answer("Выберите период продления:", reply_markup=keyboard)
 
-    if not user:
-        await message.answer("❌ У вас нет активной подписки!")
-        return
 
-    # Показываем варианты продления (без оплаты)
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="30 дней", callback_data="renew_30")],
-            [InlineKeyboardButton(text="90 дней", callback_data="renew_90")],
-            [InlineKeyboardButton(text="180 дней", callback_data="renew_180")],
-            [InlineKeyboardButton(text="365 дней", callback_data="renew_365")]
-        ]
-    )
-
-    await message.answer("Выберите период продления:", reply_markup=keyboard)
-
-
-@dp.callback_query(lambda c: c.data.startswith('renew_'))
-async def process_renewal(callback: types.CallbackQuery):
-    """Обработка выбора периода продления"""
-    days_map = {
-        'renew_30': 30,
-        'renew_90': 90,
-        'renew_180': 180,
-        'renew_365': 365
-    }
-
-    days = days_map.get(callback.data)
-    if not days:
-        await callback.answer("Неверный выбор")
-        return
-
-    user_id = callback.from_user.id
-    user = get_user_by_telegram_id(user_id)
-
-    if not user:
-        await callback.message.answer("❌ У вас нет активной подписки!")
-        await callback.answer()
-        return
-
-    # Проверяем существование клиента
-    if not vpn_manager.client_exists(user['client_email']):
-        delete_user_by_email(user['client_email'])
-        await callback.message.answer(
-            "❌ Ваша подписка не найдена в системе.\n"
-            "Пожалуйста, создайте новую подписку.",
-            reply_markup=get_user_keyboard(user_id)
-        )
-        await callback.answer()
-        return
-
-    user_id = callback.from_user.id
-    user = get_user_by_telegram_id(user_id)
-
-    if not user:
-        await callback.message.answer("❌ У вас нет активной подписки!")
-        await callback.answer()
-        return
-
-    # Рассчитываем новый срок
-    current_expiry = user['expiry_time'] if user['expiry_time'] > 0 else int(time.time() * 1000)
-    new_expiry = current_expiry + (days * 24 * 60 * 60 * 1000)
-
-    # Обновляем в 3x-ui
-    success = vpn_manager.update_client(
-        user['client_uuid'],
-        user['client_email'],
-        user['sub_id'],
-        new_expiry
-    )
-
-    if success:
-        # Обновляем в БД
-        update_user_expiry(user_id, new_expiry)
-
-        await callback.message.answer(
-            f"✅ Подписка продлена на {days} дней!\n"
-            f"Новый срок действия: {vpn_manager.timestamp_to_date(new_expiry)}"
-        )
-    else:
-        await callback.message.answer("❌ Ошибка при продлении подписки")
-
-    await callback.answer()
+# @dp.callback_query(lambda c: c.data.startswith('renew_'))
+# async def process_renewal(callback: types.CallbackQuery):
+#     """Обработка выбора периода продления"""
+#     days_map = {
+#         'renew_30': 30,
+#         'renew_90': 90,
+#         'renew_180': 180,
+#         'renew_365': 365
+#     }
+#
+#     days = days_map.get(callback.data)
+#     if not days:
+#         await callback.answer("Неверный выбор")
+#         return
+#
+#     user_id = callback.from_user.id
+#     user = get_user_by_telegram_id(user_id)
+#
+#     if not user:
+#         await callback.message.answer("❌ У вас нет активной подписки!")
+#         await callback.answer()
+#         return
+#
+#     # Проверяем существование клиента
+#     if not vpn_manager.client_exists(user['client_email']):
+#         delete_user_by_email(user['client_email'])
+#         await callback.message.answer(
+#             "❌ Ваша подписка не найдена в системе.\n"
+#             "Пожалуйста, создайте новую подписку.",
+#             reply_markup=get_user_keyboard(user_id)
+#         )
+#         await callback.answer()
+#         return
+#
+#     user_id = callback.from_user.id
+#     user = get_user_by_telegram_id(user_id)
+#
+#     if not user:
+#         await callback.message.answer("❌ У вас нет активной подписки!")
+#         await callback.answer()
+#         return
+#
+#     # Рассчитываем новый срок
+#     current_expiry = user['expiry_time'] if user['expiry_time'] > 0 else int(time.time() * 1000)
+#     new_expiry = current_expiry + (days * 24 * 60 * 60 * 1000)
+#
+#     # Обновляем в 3x-ui
+#     success = vpn_manager.update_client(
+#         user['client_uuid'],
+#         user['client_email'],
+#         user['sub_id'],
+#         new_expiry
+#     )
+#
+#     if success:
+#         # Обновляем в БД
+#         update_user_expiry(user_id, new_expiry)
+#
+#         await callback.message.answer(
+#             f"✅ Подписка продлена на {days} дней!\n"
+#             f"Новый срок действия: {vpn_manager.timestamp_to_date(new_expiry)}"
+#         )
+#     else:
+#         await callback.message.answer("❌ Ошибка при продлении подписки")
+#
+#     await callback.answer()
 
 
 @dp.message(lambda message: message.text == "👑 Админ-панель")

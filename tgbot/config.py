@@ -23,10 +23,10 @@ YOOKASSA_SHOP_ID=os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY=os.getenv("YOOKASSA_SECRET_KEY")
 YOOKASSA_API_KEY=os.getenv("YOOKASSA_API_KEY")
 # URL для возврата после оплаты (Telegram Deep Link или ваш сайт)
-YOOKASSA_RETURN_URL = "https://t.me/flashlinkvpntestbot?start=payment_success"
+YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL")
 
 # URL для вебхуков (должен быть HTTPS!)
-YOOKASSA_WEBHOOK_URL = "https://oddly-compatible-guanaco.cloudpub.ru:443/webhook/yookassa"
+YOOKASSA_WEBHOOK_URL = os.getenv("YOOKASSA_WEBHOOK_URL")
 
 # Текущий режим (sandbox или production)
 YOOKASSA_MODE = "sandbox"  # Поменяйте на "production" для реальных платежей
