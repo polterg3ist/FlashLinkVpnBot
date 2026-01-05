@@ -16,7 +16,7 @@ from config import BOT_TOKEN, ADMIN_IDS, TRIAL_DAYS
 from database import (
     get_user_by_telegram_id, add_user, update_user_expiry,
     get_all_users, delete_user_by_email, get_user_by_client_email, get_orphaned_users, validate_and_sync_users,
-    create_payment, get_user_payments
+    create_payment, get_user_payments, update_user_client
 )
 from vpn_manager import VPNManager
 
@@ -202,10 +202,14 @@ def get_user_keyboard(telegram_id):
         keyboard_buttons.extend([
             [KeyboardButton(text="👤 Мой аккаунт")],
             [KeyboardButton(text="💰 Купить подписку")],
+            [KeyboardButton(text="🔁 Получить новую ссылку")],
             [KeyboardButton(text="📊 Мои платежи")]
         ])
     else:
-        keyboard_buttons.append([KeyboardButton(text="🎁 Получить пробную подписку")])
+        keyboard_buttons.extend([
+            [KeyboardButton(text="🎁 Получить пробную подписку")],
+            [KeyboardButton(text="💰 Купить подписку")]
+        ])
 
     if telegram_id in ADMIN_IDS:
         keyboard_buttons.append([KeyboardButton(text="👑 Админ-панель")])
@@ -235,7 +239,7 @@ async def cmd_start(message: types.Message):
     user_id = message.from_user.id
 
     welcome_text = (
-        "👋 Добро пожаловать в VPN бот!\n\n"
+        "👋 Добро пожаловать в FlashLinkVPN бот!\n\n"
         "🎁 Получите бесплатную пробную подписку на 30 дней\n"
         "🔐 Безопасный и быстрый доступ к интернету\n"
         "🌍 Доступ к любым сайтам и сервисам"
@@ -488,103 +492,113 @@ async def my_account(message: types.Message):
         f"⏳ Срок действия: {expiry_date}\n"
         f"📅 Осталось дней: {days_left}\n"
         f"📊 Трафик: {traffic_gb:.2f} GB\n\n"
-        f"🔗 Ваша ссылка для подключения (нажмите чтобы скопировать):\n"
+        f"🔗 Ваша ссылка для подключения (нажмите чтобы скопировать):\n\n"
         f"<code>{vpn_link}</code>"
     )
 
     await message.answer(account_text, parse_mode="HTML")
 
 
-# @dp.message(lambda message: message.text == "🔄 Продлить подписку")
-# async def renew_subscription_start(message: types.Message, state: FSMContext):
-#     """Начало процесса продления подписки"""
-#     user_id = message.from_user.id
-#     user = get_user_by_telegram_id(user_id)
-#
-#     if not user:
-#         await message.answer("❌ У вас нет активной подписки!")
-#         return
-#
-#     # Показываем варианты продления (без оплаты)
-#     keyboard = InlineKeyboardMarkup(
-#         inline_keyboard=[
-#             [InlineKeyboardButton(text="30 дней", callback_data="renew_30")],
-#             [InlineKeyboardButton(text="90 дней", callback_data="renew_90")],
-#             [InlineKeyboardButton(text="180 дней", callback_data="renew_180")],
-#             [InlineKeyboardButton(text="365 дней", callback_data="renew_365")]
-#         ]
-#     )
-#
-#     await message.answer("Выберите период продления:", reply_markup=keyboard)
+@dp.message(lambda message: message.text == "🔁 Получить новую ссылку")
+async def regenerate_vpn_link(message: types.Message):
+    """Генерация новой VPN-ссылки для пользователя с активной подпиской"""
+    user_id = message.from_user.id
+    user = get_user_by_telegram_id(user_id)
 
+    if not user:
+        await message.answer("❌ У вас нет активной подписки. Получите пробную или купите подписку.")
+        return
 
-# @dp.callback_query(lambda c: c.data.startswith('renew_'))
-# async def process_renewal(callback: types.CallbackQuery):
-#     """Обработка выбора периода продления"""
-#     days_map = {
-#         'renew_30': 30,
-#         'renew_90': 90,
-#         'renew_180': 180,
-#         'renew_365': 365
-#     }
-#
-#     days = days_map.get(callback.data)
-#     if not days:
-#         await callback.answer("Неверный выбор")
-#         return
-#
-#     user_id = callback.from_user.id
-#     user = get_user_by_telegram_id(user_id)
-#
-#     if not user:
-#         await callback.message.answer("❌ У вас нет активной подписки!")
-#         await callback.answer()
-#         return
-#
-#     # Проверяем существование клиента
-#     if not vpn_manager.client_exists(user['client_email']):
-#         delete_user_by_email(user['client_email'])
-#         await callback.message.answer(
-#             "❌ Ваша подписка не найдена в системе.\n"
-#             "Пожалуйста, создайте новую подписку.",
-#             reply_markup=get_user_keyboard(user_id)
-#         )
-#         await callback.answer()
-#         return
-#
-#     user_id = callback.from_user.id
-#     user = get_user_by_telegram_id(user_id)
-#
-#     if not user:
-#         await callback.message.answer("❌ У вас нет активной подписки!")
-#         await callback.answer()
-#         return
-#
-#     # Рассчитываем новый срок
-#     current_expiry = user['expiry_time'] if user['expiry_time'] > 0 else int(time.time() * 1000)
-#     new_expiry = current_expiry + (days * 24 * 60 * 60 * 1000)
-#
-#     # Обновляем в 3x-ui
-#     success = vpn_manager.update_client(
-#         user['client_uuid'],
-#         user['client_email'],
-#         user['sub_id'],
-#         new_expiry
-#     )
-#
-#     if success:
-#         # Обновляем в БД
-#         update_user_expiry(user_id, new_expiry)
-#
-#         await callback.message.answer(
-#             f"✅ Подписка продлена на {days} дней!\n"
-#             f"Новый срок действия: {vpn_manager.timestamp_to_date(new_expiry)}"
-#         )
-#     else:
-#         await callback.message.answer("❌ Ошибка при продлении подписки")
-#
-#     await callback.answer()
+    # 1. ПРОВЕРЯЕМ, АКТИВНА ЛИ ПОДПИСКА (оставшиеся дни > 0)
+    days_left = vpn_manager.get_days_left(user['expiry_time'])
 
+    # Проверяем, что days_left — это число и оно больше 0
+    # get_days_left может вернуть "∞" для бессрочной подписки, поэтому нужна проверка
+    is_subscription_active = False
+    remaining_days = 0
+
+    if isinstance(days_left, str) and days_left == "∞":
+        # Бессрочная подписка — считаем активной
+        is_subscription_active = True
+        remaining_days = 0  # Для создания клиента
+    elif isinstance(days_left, int) and days_left > 0:
+        # Подписка активна, осталось дней > 0
+        is_subscription_active = True
+        remaining_days = days_left
+    else:
+        # Подписка истекла (days_left == 0) или некорректный формат
+        is_subscription_active = False
+
+    if not is_subscription_active:
+        # Подписка истекла — сообщаем и предлагаем купить новую
+        expiry_date = vpn_manager.timestamp_to_date(user['expiry_time'])
+        await message.answer(
+            f"⏳ Ваша подписка истекла {expiry_date}.\n\n"
+            f"Чтобы получить новую ссылку, необходимо продлить подписку.\n"
+            f"Используйте кнопку <b>💰 Купить подписку</b>.",
+            parse_mode="HTML"
+        )
+        return
+
+    # 2. ЕСЛИ ПОДПИСКА АКТИВНА — ПЕРЕГЕНЕРИРУЕМ ССЫЛКУ
+    try:
+        # Проверяем, существует ли старый клиент в панели
+        if not vpn_manager.client_exists(user['client_email']):
+            await message.answer("⚠️ Ваш старый аккаунт не найден. Создаём новый...")
+
+        # Удаляем старого клиента из панели (игнорируем ошибки, если его уже нет)
+        vpn_manager.delete_client(user['client_uuid'])
+
+        # Создаём нового клиента в панели с ТЕМ ЖЕ СРОКОМ ДЕЙСТВИЯ
+        email_prefix = user['client_email'].split('_')[0] if '_' in user['client_email'] else 'user'
+        result = vpn_manager.create_client(
+            days=remaining_days,
+            email_prefix=f"{email_prefix}_{user_id}"
+        )
+
+        if not result['success']:
+            await message.answer(f"❌ Ошибка при создании нового клиента: {result.get('error', 'Неизвестная ошибка')}")
+            return
+
+        # Обновляем данные пользователя в БД
+        success = update_user_client(
+            telegram_id=user_id,
+            new_client_email=result['email'],
+            new_client_uuid=result['uuid'],
+            new_sub_id=result['sub_id']
+        )
+
+        if not success:
+            await message.answer("❌ Ошибка при обновлении данных в базе.")
+            return
+
+        # Генерируем и отправляем новую ссылку
+        new_vpn_link = vpn_manager.generate_vpn_link(result['uuid'], result['email'])
+
+        # Формируем сообщение об успехе
+        success_message = (
+            f"✅ Новая ссылка успешно создана!\n\n"
+            f"📧 Новый email: {result['email']}\n"
+        )
+
+        # Добавляем информацию об оставшемся сроке, если он не бессрочный
+        if remaining_days > 0:
+            success_message += f"⏳ Осталось дней: {remaining_days}\n"
+        elif remaining_days == 0 and isinstance(days_left, str):
+            success_message += f"⏳ Срок: Бессрочная подписка\n"
+
+        success_message += (
+            f"\n🔗 Новая ссылка для подключения (нажмите чтобы скопировать):\n\n"
+            f"<code>{new_vpn_link}</code>\n\n"
+            f"⚠️ Сохраните эту ссылку в надёжном месте!"
+        )
+
+        await message.answer(success_message, parse_mode="HTML")
+        logger.info(f"Пользователь {user_id} перегенерировал ссылку. Осталось дней: {remaining_days}")
+
+    except Exception as e:
+        logger.error(f"Ошибка при перегенерации ссылки для {user_id}: {e}")
+        await message.answer("❌ Произошла техническая ошибка при создании новой ссылки.")
 
 @dp.message(lambda message: message.text == "👑 Админ-панель")
 async def admin_panel(message: types.Message):

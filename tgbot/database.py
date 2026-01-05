@@ -153,6 +153,23 @@ def update_user_traffic(telegram_id, total_traffic_mb):
         print(f"❌ Ошибка при обновлении трафика пользователя {telegram_id}: {e}")
         return False
 
+def update_user_client(telegram_id, new_client_email, new_client_uuid, new_sub_id):
+    """Обновление данных клиента (при перегенерации ссылки)"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE users 
+                SET client_email = ?, client_uuid = ?, sub_id = ?
+                WHERE telegram_id = ?
+            ''', (new_client_email, new_client_uuid, new_sub_id, telegram_id))
+            conn.commit()
+            print(f"✅ Обновлены данные клиента для пользователя {telegram_id}")
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при обновлении данных клиента {telegram_id}: {e}")
+        return False
+
 
 def get_all_users():
     """Получение списка всех пользователей"""
