@@ -29,7 +29,8 @@ YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL")
 YOOKASSA_WEBHOOK_URL = os.getenv("YOOKASSA_WEBHOOK_URL")
 
 # Текущий режим (sandbox или production)
-YOOKASSA_MODE = "sandbox"  # Поменяйте на "production" для реальных платежей
+# YOOKASSA_MODE = "sandbox"  # Поменяйте на "production" для реальных платежей
+YOOKASSA_MODE = "production"  # Поменяйте на "production" для реальных платежей
 
 # ==== Настройка официальной библиотеки ЮKassa ====
 
@@ -39,7 +40,7 @@ Configuration.secret_key = YOOKASSA_API_KEY  # Используем API_KEY
 
 # Тарифы подписок (в рублях)
 SUBSCRIPTION_PRICES = {
-    30: 299,    # 30 дней - 299 руб
+    30: 10,    # 30 дней - 299 руб
     90: 799,    # 90 дней - 799 руб
     180: 1499,  # 180 дней - 1499 руб
     365: 2699   # 365 дней - 2699 руб
@@ -47,7 +48,6 @@ SUBSCRIPTION_PRICES = {
 
 # Настройки подписок
 TRIAL_DAYS = 14  # Длительность пробной подписки
-RENEWAL_PRICE = 299  # Цена продления в рублях (пока не используется)
 
 # Настройки для генерации ссылок (значения по умолчанию)
 INBOUND_CONFIG = {

@@ -21,7 +21,7 @@ from database import (
 from vpn_manager import VPNManager
 
 from yookassa_payments import yookassa
-from config import SUBSCRIPTION_PRICES, YOOKASSA_RETURN_URL
+from config import SUBSCRIPTION_PRICES, YOOKASSA_RETURN_URL, TRIAL_DAYS
 
 
 # ========== НАСТРОЙКА ПАПКИ ДЛЯ ЛОГОВ ==========
@@ -240,7 +240,7 @@ async def cmd_start(message: types.Message):
 
     welcome_text = (
         "👋 Добро пожаловать в FlashLinkVPN бот!\n\n"
-        "🎁 Получите бесплатную пробную подписку на 30 дней\n"
+        f"🎁 Получите бесплатную пробную подписку на {TRIAL_DAYS} дней\n"
         "🔐 Безопасный и быстрый доступ к интернету\n"
         "🌍 Доступ к любым сайтам и сервисам"
     )
@@ -302,12 +302,12 @@ async def buy_subscription_start(message: types.Message):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="30 дней - 299₽", callback_data="buy_30"),
-                InlineKeyboardButton(text="90 дней - 799₽", callback_data="buy_90")
+                InlineKeyboardButton(text=f"30 дней - {SUBSCRIPTION_PRICES.get(30)}₽", callback_data="buy_30"),
+                InlineKeyboardButton(text=f"90 дней - {SUBSCRIPTION_PRICES.get(90)}₽", callback_data="buy_90")
             ],
             [
-                InlineKeyboardButton(text="180 дней - 1499₽", callback_data="buy_180"),
-                InlineKeyboardButton(text="365 дней - 2699₽", callback_data="buy_365")
+                InlineKeyboardButton(text=f"180 дней - {SUBSCRIPTION_PRICES.get(180)}₽", callback_data="buy_180"),
+                InlineKeyboardButton(text=f"365 дней - {SUBSCRIPTION_PRICES.get(365)}₽", callback_data="buy_365")
             ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
         ]
@@ -315,10 +315,10 @@ async def buy_subscription_start(message: types.Message):
 
     await message.answer(
         "🎯 Выберите тариф подписки:\n\n"
-        "• 30 дней - 299₽\n"
-        "• 90 дней - 799₽ (экономьте 66₽ в месяц!)\n"
-        "• 180 дней - 1499₽ (экономьте 83₽ в месяц!)\n"
-        "• 365 дней - 2699₽ (экономьте 92₽ в месяц!)\n\n"
+        f"• 30 дней - {SUBSCRIPTION_PRICES.get(30)}₽\n"
+        f"• 90 дней - {SUBSCRIPTION_PRICES.get(90)}₽ (экономьте 66₽ в месяц!)\n"
+        f"• 180 дней - {SUBSCRIPTION_PRICES.get(180)}₽ (экономьте 83₽ в месяц!)\n"
+        f"• 365 дней - {SUBSCRIPTION_PRICES.get(365)}₽ (экономьте 92₽ в месяц!)\n\n"
         "💳 Оплата через Яндекс Кассу (карты, ЮMoney и др.)",
         reply_markup=keyboard
     )
