@@ -341,6 +341,62 @@ def get_user_payments(user_id, limit=10):
         return []
 
 
+def clear_database():
+    """Полная очистка базы данных (удаление всех пользователей и платежей)"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Удаляем все платежи
+            cursor.execute('DELETE FROM payments')
+            payments_deleted = cursor.rowcount
+
+            # Удаляем всех пользователей
+            cursor.execute('DELETE FROM users')
+            users_deleted = cursor.rowcount
+
+            # Сбрасываем автоинкремент
+            cursor.execute('DELETE FROM sqlite_sequence')
+
+            conn.commit()
+
+            print(f"✅ База данных очищена. Удалено пользователей: {users_deleted}, платежей: {payments_deleted}")
+            return {
+                'success': True,
+                'users_deleted': users_deleted,
+                'payments_deleted': payments_deleted
+            }
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при очистке базы данных: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+def delete_all_clients_from_db():
+    """Удаление всех пользователей из БД (без очистки платежей)"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) as count FROM users')
+            count_before = cursor.fetchone()['count']
+
+            cursor.execute('DELETE FROM users')
+            conn.commit()
+
+            print(f"✅ Удалено {count_before} пользователей из БД")
+            return {
+                'success': True,
+                'deleted_count': count_before
+            }
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при удалении пользователей из БД: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
 # Инициализация БД при импорте
 if __name__ == "__main__":
     init_db()

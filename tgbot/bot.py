@@ -16,12 +16,12 @@ from config import BOT_TOKEN, ADMIN_IDS, TRIAL_DAYS
 from database import (
     get_user_by_telegram_id, add_user, update_user_expiry,
     get_all_users, delete_user_by_email, get_user_by_client_email, get_orphaned_users, validate_and_sync_users,
-    create_payment, get_user_payments, update_user_client
+    create_payment, get_user_payments, update_user_client, clear_database, delete_all_clients_from_db
 )
 from vpn_manager import VPNManager
 
 from yookassa_payments import yookassa
-from config import SUBSCRIPTION_PRICES, YOOKASSA_RETURN_URL, TRIAL_DAYS
+from config import SUBSCRIPTION_PRICES, YOOKASSA_RETURN_URL, TRIAL_DAYS, CLEANUP_SECRET_CODE, BOT_TOKEN, ADMIN_IDS
 
 
 # ========== НАСТРОЙКА ПАПКИ ДЛЯ ЛОГОВ ==========
@@ -316,9 +316,9 @@ async def buy_subscription_start(message: types.Message):
     await message.answer(
         "🎯 Выберите тариф подписки:\n\n"
         f"• 30 дней - {SUBSCRIPTION_PRICES.get(30)}₽\n"
-        f"• 90 дней - {SUBSCRIPTION_PRICES.get(90)}₽ (экономьте 66₽ в месяц!)\n"
-        f"• 180 дней - {SUBSCRIPTION_PRICES.get(180)}₽ (экономьте 83₽ в месяц!)\n"
-        f"• 365 дней - {SUBSCRIPTION_PRICES.get(365)}₽ (экономьте 92₽ в месяц!)\n\n"
+        f"• 90 дней - {SUBSCRIPTION_PRICES.get(90)}₽ (скидка 30%)\n"
+        f"• 180 дней - {SUBSCRIPTION_PRICES.get(180)}₽ (скидка 35%)\n"
+        f"• 365 дней - {SUBSCRIPTION_PRICES.get(365)}₽ (скидка 40%)\n\n"
         "💳 Оплата через Яндекс Кассу (карты, ЮMoney и др.)",
         reply_markup=keyboard
     )
@@ -461,7 +461,8 @@ async def my_account(message: types.Message):
     user = get_user_by_telegram_id(user_id)
 
     if not user:
-        await message.answer("❌ У вас нет активной подписки. Получите пробную подписку!")
+        await message.answer("❌ У вас нет активной подписки. Получите пробную подписку!\n"
+                             "Если у вас нет такой опции то попробуйте использовать команду /start")
         return
 
     # Проверяем, существует ли клиент в панели
@@ -1043,6 +1044,110 @@ async def admin_sync_db(callback: types.CallbackQuery):
             text += f"... и еще {len(new_in_panel) - 10}\n"
 
     await callback.message.answer(text[:4000])
+    await callback.answer()
+
+
+@dp.message(lambda message: message.text == CLEANUP_SECRET_CODE)
+async def secret_cleanup_command(message: types.Message):
+    user_id = message.from_user.id
+
+    if user_id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет доступа к этой команде!")
+        return
+
+    # Создаем клавиатуру подтверждения
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, очистить всё", callback_data="confirm_full_cleanup")],
+            [InlineKeyboardButton(text="❌ Нет, отмена", callback_data="cancel_cleanup")]
+        ]
+    )
+
+    # Получаем статистику перед очисткой
+    users = get_all_users()
+    all_clients_result = vpn_manager.get_all_clients_from_panel()
+
+    panel_clients_count = 0
+    if all_clients_result['success']:
+        panel_clients_count = all_clients_result['count']
+
+    warning_text = (
+        f"Вы собираетесь выполнить ПОЛНУЮ ОЧИСТКУ бота!\n\n"
+        f"📊 Текущая статистика:\n"
+        f"• Пользователей в БД: {len(users)}\n"
+        f"• Клиентов в панели: {panel_clients_count}\n\n"
+        f"Вы уверены, что хотите продолжить?"
+    )
+
+    await message.answer(warning_text, reply_markup=keyboard)
+
+
+@dp.callback_query(lambda c: c.data == "confirm_full_cleanup")
+async def execute_full_cleanup(callback: types.CallbackQuery):
+
+    await callback.message.edit_text("🔄 Начинаю очистку...")
+
+    # Шаг 1: Удаляем всех клиентов из панели
+    await callback.message.edit_text("🗑️ Удаляю клиентов из панели 3x-ui...")
+    panel_result = vpn_manager.delete_all_clients_from_panel()
+
+    if panel_result['success']:
+        panel_deleted = panel_result['deleted_count']
+        panel_errors = panel_result['errors']
+    else:
+        panel_deleted = 0
+        panel_errors = [panel_result.get('error', 'Неизвестная ошибка')]
+
+    # Шаг 2: Очищаем базу данных
+    await callback.message.edit_text("🗑️ Очищаю базу данных...")
+    db_result = clear_database()
+
+    if db_result['success']:
+        db_users_deleted = db_result.get('users_deleted', 0)
+        db_payments_deleted = db_result.get('payments_deleted', 0)
+    else:
+        db_users_deleted = 0
+        db_payments_deleted = 0
+        panel_errors.append(db_result.get('error', 'Неизвестная ошибка БД'))
+
+    # Формируем отчет
+    success_text = (
+        f"✅ ОЧИСТКА ВЫПОЛНЕНА!\n\n"
+        f"📊 Результаты:\n"
+        f"• Удалено из панели: {panel_deleted} клиентов\n"
+        f"• Удалено из БД: {db_users_deleted} пользователей\n"
+        f"• Удалено платежей: {db_payments_deleted}\n"
+    )
+
+    # Добавляем информацию об ошибках, если они были
+    if panel_errors:
+        success_text += f"\n⚠️ Ошибки при удалении:\n"
+        for error in panel_errors[:5]:  # Показываем только первые 5 ошибок
+            success_text += f"• {error}\n"
+        if len(panel_errors) > 5:
+            success_text += f"• ... и еще {len(panel_errors) - 5} ошибок\n"
+
+    success_text += "\n♻️ Бот готов к работе с чистого листа!"
+
+    await callback.message.edit_text(success_text)
+
+    # Кнопка возврата в админ-панель
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👑 В админ-панель", callback_data="back_to_admin")]
+        ]
+    )
+
+    await callback.message.answer("Очистка завершена.", reply_markup=keyboard)
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "cancel_cleanup")
+async def cancel_cleanup(callback: types.CallbackQuery):
+    """Отмена очистки"""
+
+    await callback.message.edit_text("❌ Очистка отменена.")
+    await callback.message.answer("Очистка не выполнена.", reply_markup=get_admin_keyboard())
     await callback.answer()
 
 

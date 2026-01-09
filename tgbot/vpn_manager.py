@@ -25,7 +25,9 @@ class VPNManager:
         try:
             response = self.session.post(login_url, data=login_data)
             return response.json().get('success', False)
-        except:
+        except Exception as e:
+            print('Authentication failed')
+            print(e)
             return False
 
     def fetch_inbound_config(self):
@@ -44,7 +46,8 @@ class VPNManager:
                         stream_settings = json.loads(inbound.get('streamSettings', '{}'))
 
                         reality_settings = stream_settings.get('realitySettings', {})
-                        grpc_settings = stream_settings.get('grpcSettings', {})
+
+                        # УДАЛИЛИ: tcp_settings, так как она не используется
 
                         # Извлекаем shortId (первый из списка, может быть пустым)
                         short_ids = reality_settings.get('shortIds', [])
@@ -58,13 +61,17 @@ class VPNManager:
                             sni = dest.split(':')[0]
 
                         # Получаем остальные параметры Reality
+                        # ИСПРАВЛЕНИЕ: В вашем JSON spiderX и publicKey находятся в realitySettings.settings
                         spider_x = reality_settings.get('settings', {}).get('spiderX', '/')
                         public_key = reality_settings.get('settings', {}).get('publicKey', '')
                         fingerprint = reality_settings.get('settings', {}).get('fingerprint', 'chrome')
 
-                        # Параметры gRPC
-                        service_name = grpc_settings.get('serviceName', '')
-                        authority = grpc_settings.get('authority', '')
+                        # Получаем flow из настроек клиента
+                        flow = ""
+                        clients = settings.get('clients', [])
+                        if clients:
+                            # Первый клиент в списке
+                            flow = clients[0].get('flow', '')
 
                         # Базовые параметры
                         encryption = settings.get('encryption', 'none')
@@ -82,9 +89,10 @@ class VPNManager:
                             'public_key': public_key,
                             'short_id': short_id,
                             'spider_x': spider_x,
-                            'service_name': service_name,
-                            'authority': authority,
+                            'service_name': '',  # Для TCP пустое
+                            'authority': '',  # Для TCP пустое
                             'encryption': encryption,
+                            'flow': flow,  # Добавляем flow
                             'remark': inbound.get('remark', ''),
                             'server_ip': PANEL_HOST.split('://')[1].split(':')[0]
                         }
@@ -160,12 +168,15 @@ class VPNManager:
 
         add_url = f"{self.base_url}/xui/inbound/addClient"
 
+        # Получаем flow из конфига, если его нет - используем значение по умолчанию
+        flow_value = self.inbound_config.get('flow', 'xtls-rprx-vision')
+
         client_data = {
             "id": INBOUND_ID,
             "settings": json.dumps({
                 "clients": [{
                     "id": client_uuid,
-                    "flow": "",
+                    "flow": flow_value,
                     "email": client_email,
                     "totalGB": 0,
                     "expiryTime": expiry_time,
@@ -201,22 +212,33 @@ class VPNManager:
             self.fetch_inbound_config()
             config = self.inbound_config
 
-        # Кодируем spider_x (в вашем примере spx=%2F)
+        # Кодируем spider_x
         spx_encoded = urllib.parse.quote(config['spider_x'], safe='')
 
-        # Формируем параметры в ТОЧНОМ порядке как в ваших ссылках
+        # Формируем базовые параметры
         params = [
             f"type={config['network']}",
             f"encryption={config['encryption']}",
-            f"serviceName={config['service_name']}",
-            f"authority={config['authority']}",
+        ]
+
+        # Для gRPC добавляем serviceName и authority
+        if config['network'] == 'grpc':
+            params.append(f"serviceName={config['service_name']}")
+            params.append(f"authority={config['authority']}")
+
+        # Добавляем security и параметры Reality
+        params.extend([
             f"security={config['security']}",
             f"pbk={config['public_key']}",
             f"fp={config['fingerprint']}",
             f"sni={config['sni']}",
             f"sid={config['short_id']}",
             f"spx={spx_encoded}"
-        ]
+        ])
+
+        # Добавляем flow только если он есть и не пустой
+        if config.get('flow'):
+            params.append(f"flow={config['flow']}")
 
         # Собираем query-строку
         query = "&".join(params)
@@ -228,6 +250,7 @@ class VPNManager:
 
     def update_client(self, client_uuid, client_email, sub_id, new_expiry_time):
         """Обновление клиента (продление подписки)"""
+        flow_value = self.inbound_config.get('flow', 'xtls-rprx-vision')
         update_url = f"{self.base_url}/xui/inbound/updateClient/{client_uuid}"
 
         update_data = {
@@ -235,7 +258,7 @@ class VPNManager:
             "settings": json.dumps({
                 "clients": [{
                     "id": client_uuid,
-                    "flow": "",
+                    "flow": flow_value,
                     "email": client_email,
                     "totalGB": 0,
                     "expiryTime": new_expiry_time,
@@ -262,8 +285,8 @@ class VPNManager:
             response = self.session.post(delete_url)
             result = response.json()
             return result.get('success', False)
-        except:
-            return False
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
     def timestamp_to_date(self, timestamp_ms):
         """Конвертация timestamp в читаемую дату"""
@@ -317,3 +340,94 @@ class VPNManager:
             print(f"Ошибка при получении информации о клиенте {client_email}: {e}")
 
         return {'exists': False}
+
+    def delete_all_clients_from_panel(self):
+        """Удаление всех клиентов из панели 3x-ui"""
+        try:
+            list_url = f"{self.base_url}/xui/inbound/list"
+            response = self.session.post(list_url)
+            result = response.json()
+
+            if not result.get('success'):
+                return {'success': False, 'error': 'Не удалось получить список клиентов'}
+
+            deleted_count = 0
+            errors = []
+
+            for inbound in result.get('obj', []):
+                if inbound.get('id') == INBOUND_ID:
+                    # Получаем всех клиентов
+                    settings = json.loads(inbound.get('settings', '{}'))
+                    clients = settings.get('clients', [])
+
+                    for client in clients:
+                        client_uuid = client.get('id')
+                        if client_uuid:
+                            try:
+                                # Удаляем клиента
+                                success = self.delete_client(client_uuid)
+                                if success:
+                                    deleted_count += 1
+                                    print(f"✅ Удален клиент: {client.get('email', 'unknown')}")
+                                else:
+                                    errors.append(f"Не удалось удалить клиента {client_uuid}")
+                            except Exception as e:
+                                errors.append(f"Ошибка при удалении клиента {client_uuid}: {str(e)}")
+
+                    break  # Нашли нужный inbound, выходим
+
+            return {
+                'success': True,
+                'deleted_count': deleted_count,
+                'errors': errors,
+                'error_count': len(errors)
+            }
+
+        except Exception as e:
+            print(f"❌ Ошибка при удалении всех клиентов из панели: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def get_all_clients_from_panel(self):
+        """Получение списка всех клиентов из панели"""
+        try:
+            list_url = f"{self.base_url}/xui/inbound/list"
+            response = self.session.post(list_url)
+            result = response.json()
+
+            clients_list = []
+
+            if result.get('success'):
+                for inbound in result.get('obj', []):
+                    if inbound.get('id') == INBOUND_ID:
+                        settings = json.loads(inbound.get('settings', '{}'))
+                        clients = settings.get('clients', [])
+
+                        for client in clients:
+                            clients_list.append({
+                                'email': client.get('email'),
+                                'uuid': client.get('id'),
+                                'flow': client.get('flow', ''),
+                                'expiryTime': client.get('expiryTime', 0),
+                                'enable': client.get('enable', True)
+                            })
+                        break
+
+            return {
+                'success': True,
+                'clients': clients_list,
+                'count': len(clients_list)
+            }
+
+        except Exception as e:
+            print(f"❌ Ошибка при получении клиентов из панели: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+if __name__ == "__main__":
+    vm = VPNManager()
+    print(vm.inbound_config)

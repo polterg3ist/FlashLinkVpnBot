@@ -16,7 +16,7 @@ ADMIN_IDS = [848651169, 618227002]  # Замените на ваши Telegram ID
 PANEL_HOST = os.getenv("PANEL_HOST")
 PANEL_USERNAME = os.getenv("PANEL_USERNAME")
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD")
-INBOUND_ID = 6
+INBOUND_ID = 2
 
 # ЮКасса
 YOOKASSA_SHOP_ID=os.getenv("YOOKASSA_SHOP_ID")
@@ -27,6 +27,9 @@ YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL")
 
 # URL для вебхуков (должен быть HTTPS!)
 YOOKASSA_WEBHOOK_URL = os.getenv("YOOKASSA_WEBHOOK_URL")
+
+# Секретный код для полной очистки бота
+CLEANUP_SECRET_CODE = "P8Wov7CRKkRZ6O8U"
 
 # Текущий режим (sandbox или production)
 # YOOKASSA_MODE = "sandbox"  # Поменяйте на "production" для реальных платежей
@@ -41,9 +44,9 @@ Configuration.secret_key = YOOKASSA_API_KEY  # Используем API_KEY
 # Тарифы подписок (в рублях)
 SUBSCRIPTION_PRICES = {
     30: 10,    # 30 дней - 299 руб
-    90: 799,    # 90 дней - 799 руб
-    180: 1499,  # 180 дней - 1499 руб
-    365: 2699   # 365 дней - 2699 руб
+    90: 320,    # 90 дней - 799 руб
+    180: 590,  # 180 дней - 1499 руб
+    365: 1100   # 365 дней - 2699 руб
 }
 
 # Настройки подписок
@@ -51,17 +54,16 @@ TRIAL_DAYS = 14  # Длительность пробной подписки
 
 # Настройки для генерации ссылок (значения по умолчанию)
 INBOUND_CONFIG = {
-    "port": 28048,
+    "port": 1935,  # Порт из новой ссылки
     "protocol": "vless",
-    "network": "grpc",
+    "network": "tcp",  # Изменилось с grpc на tcp
     "security": "reality",
     "sni": "microsoft.com",
     "fingerprint": "chrome",
-    "public_key": os.getenv("PUBLIC_KEY"),
+    "public_key": os.getenv("PUBLIC_KEY"),  # Новый публичный ключ
     "short_id": "",  # В вашем примере sid пустой
     "spider_x": "/",
-    "service_name": "",
-    "authority": "",
+    "flow": "xtls-rprx-vision",  # Добавляем flow
     "encryption": "none",
-    "remark": "TESTS"  # Префикс перед email в ссылке
+    "remark": "🔥FlashLink🔥"  # Префикс в ссылке
 }
