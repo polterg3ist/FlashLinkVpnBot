@@ -16,7 +16,7 @@ ADMIN_IDS = [848651169, 618227002]  # Замените на ваши Telegram ID
 PANEL_HOST = os.getenv("PANEL_HOST")
 PANEL_USERNAME = os.getenv("PANEL_USERNAME")
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD")
-INBOUND_ID = 2
+INBOUND_ID = 1
 
 # ЮКасса
 YOOKASSA_SHOP_ID=os.getenv("YOOKASSA_SHOP_ID")

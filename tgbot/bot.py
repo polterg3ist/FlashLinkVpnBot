@@ -12,7 +12,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN, ADMIN_IDS, TRIAL_DAYS
 from database import (
     get_user_by_telegram_id, add_user, update_user_expiry,
     get_all_users, delete_user_by_email, get_user_by_client_email, get_orphaned_users, validate_and_sync_users,
