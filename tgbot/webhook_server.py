@@ -222,7 +222,7 @@ async def handle_payment_succeeded(payment_id: str, payment_data: dict):
 
 
 async def send_telegram_notification(user_id: int, payment_id: str, days: int):
-    """Отправка уведомления в Telegram"""
+    """Отправка уведомления в Telegram после успешной оплаты"""
     try:
         if bot is None:
             webhook_logger.error("Бот не инициализирован!")
@@ -230,13 +230,20 @@ async def send_telegram_notification(user_id: int, payment_id: str, days: int):
 
         user = get_user_by_telegram_id(user_id)
         vpn_link = vpn_manager.generate_vpn_link(user['client_uuid'], user['client_email'])
+        subscription_link = vpn_manager.generate_subscription_link(user['sub_id'])
+
         message = (
             f"✅ Платеж успешно завершен!\n"
             f"📋 ID платежа: {payment_id}\n"
             f"📅 Добавлено дней: {days}\n"
             f"Ваша подписка продлена. Спасибо за оплату!\n\n"
-            f"🔗 Ваша ссылка для подключения:\n"
+            f"🔗 Ссылка для подключения (vless):\n\n"
+            f"📥 Чтобы скопировать ссылку нажмите ниже:\n"
             f"<code>{vpn_link}</code>\n\n"
+            f"📥 Ссылка на подписку (для приложений):\n"
+            f"{subscription_link}\n\n"
+            f"📥 Чтобы скопировать ссылку нажмите ниже:\n"
+            f"<code>{subscription_link}</code>\n\n"
             f"Используйте кнопку '👤 Мой аккаунт', чтобы посмотреть детали."
         )
 
@@ -245,9 +252,6 @@ async def send_telegram_notification(user_id: int, payment_id: str, days: int):
 
     except Exception as e:
         webhook_logger.error(f"Ошибка при отправке уведомления в Telegram: {e}")
-        # Записываем в файл как fallback
-        with open(LOG_DIR + 'payment_notifications.log', 'a', encoding='utf-8') as f:
-            f.write(f"{datetime.now()} - User {user_id} - Payment {payment_id} - {days} дней - ERROR: {e}\n")
 
 
 # Другие обработчики

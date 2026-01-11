@@ -49,21 +49,25 @@ SUBSCRIPTION_PRICES = {
     365: 1100   # 365 дней - 2699 руб
 }
 
+SUBSCRIPTION_BASE_URL = os.getenv("SUBSCRIPTION_BASE_URL")
+SUBSCRIPTION_PATH = os.getenv("SUBSCRIPTION_PATH")
+
+
 # Настройки подписок
 TRIAL_DAYS = 14  # Длительность пробной подписки
 
 # Настройки для генерации ссылок (значения по умолчанию)
 INBOUND_CONFIG = {
-    "port": 1935,  # Порт из новой ссылки
+    "port": 2096,  # Порт из новой ссылки
     "protocol": "vless",
-    "network": "tcp",  # Изменилось с grpc на tcp
+    "network": "tcp",
     "security": "reality",
-    "sni": "microsoft.com",
+    "sni": "www.icloud.com",  # Из нового target
     "fingerprint": "chrome",
-    "public_key": os.getenv("PUBLIC_KEY"),  # Новый публичный ключ
-    "short_id": "",  # В вашем примере sid пустой
+    "public_key": "Re5Crtxy8QzZf84aj7PoijSG8XzAHHhThhSL6a6W6Es",  # Новый ключ
+    "short_id": "c44df3cc",  # Первый из shortIds
     "spider_x": "/",
-    "flow": "xtls-rprx-vision",  # Добавляем flow
+    "flow": "xtls-rprx-vision",
     "encryption": "none",
-    "remark": "🔥FlashLink🔥"  # Префикс в ссылке
+    "remark": "🔥FlashLink🔥"
 }

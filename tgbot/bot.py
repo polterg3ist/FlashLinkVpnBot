@@ -271,20 +271,26 @@ async def get_trial_subscription(message: types.Message):
             expiry_time=result['expiry_time']
         )
 
-        # Генерируем ссылку
+        # Генерируем обе ссылки
         vpn_link = vpn_manager.generate_vpn_link(result['uuid'], result['email'])
+        subscription_link = vpn_manager.generate_subscription_link(result['sub_id'])
 
         success_text = (
             f"✅ Пробная подписка активирована!\n\n"
             f"📧 Email: {result['email']}\n"
             f"⏳ Срок действия: {vpn_manager.timestamp_to_date(result['expiry_time'])}\n"
-            f"🔗 Ссылка для подключения:\n\n"
+            f"🔗 Ссылка для подключения (vless):\n\n"
+            f"📥 Чтобы скопировать ссылку нажмите ниже:\n"
             f"<code>{vpn_link}</code>\n\n"
-            f"⚠️ Сохраните эту ссылку в надежном месте!"
+            f"📥 Ссылка на подписку (для приложений):\n"
+            f"{subscription_link}\n\n" 
+            f"📥 Чтобы скопировать ссылку нажмите ниже:\n"
+            f"<code>{subscription_link}</code>\n\n"
+            f"⚠️ Сохраните эти ссылки в надежном месте!"
         )
 
         await message.answer(success_text, parse_mode="HTML")
-        # Обновляем клавиатуру (убираем кнопку получения подписки)
+        # Обновляем клавиатуру
         await message.answer("Теперь вы можете перейти в 'Мой аккаунт' для просмотра деталей.",
                              reply_markup=get_user_keyboard(user_id))
     else:
@@ -455,47 +461,54 @@ async def my_payments(message: types.Message):
 
 @dp.message(lambda message: message.text == "👤 Мой аккаунт")
 async def my_account(message: types.Message):
-    """Информация об аккаунте пользователя с трафиком из панели"""
+    """Информация об аккаунте пользователя с трафиком и подпиской"""
     user_id = message.from_user.id
     user = get_user_by_telegram_id(user_id)
 
     if not user:
-        await message.answer("❌ У вас нет активной подписки. Получите пробную подписку!\n"
-                             "Если у вас нет такой опции то попробуйте использовать команду /start")
+        await message.answer("❌ У вас нет активной подписки. Вы можете получить пробную подписку или приобрести полную!")
         return
 
     # Проверяем, существует ли клиент в панели
     if not vpn_manager.client_exists(user['client_email']):
-        # Клиент не существует - удаляем из БД
         delete_user_by_email(user['client_email'])
         await message.answer(
             "❌ Ваша подписка не найдена в системе.\n"
             "Возможно, она была удалена администратором.\n\n"
-            "Пожалуйста, создайте новую подписку.",
+            "Пожалуйста, создайте новую подписку.\n"
+            "Используйте команду /start если не можете получить подписку",
             reply_markup=get_user_keyboard(user_id)
         )
         return
 
-    # Получаем трафик напрямую из панели
+    # Получаем трафик
     traffic_gb = vpn_manager.get_client_traffic(user['client_email'])
-
-    # Получаем информацию
     expiry_date = vpn_manager.timestamp_to_date(user['expiry_time'])
     days_left = vpn_manager.get_days_left(user['expiry_time'])
 
-    # Генерируем ссылку
+    # Генерируем обе ссылки
     vpn_link = vpn_manager.generate_vpn_link(user['client_uuid'], user['client_email'])
+    subscription_link = vpn_manager.generate_subscription_link(user['sub_id'])
 
     account_text = (
         f"👤 Ваш аккаунт\n\n"
         f"📧 Email: {user['client_email']}\n"
         f"⏳ Срок действия: {expiry_date}\n"
         f"📅 Осталось дней: {days_left}\n"
-        f"📊 Трафик: {traffic_gb:.2f} GB\n\n"
-        f"🔗 Ваша ссылка для подключения (нажмите чтобы скопировать):\n\n"
-        f"<code>{vpn_link}</code>"
+        f"📊 Трафик: {traffic_gb:.2f} GB\n"
+        f"🔑 Sub ID: {user['sub_id']}\n\n"
+        f"🔗 Ссылка для подключения (vless):\n\n"
+        f"📥 Чтобы скопировать ссылку нажмите ниже:\n"
+        f"<code>{vpn_link}</code>\n\n"
+        f"📥 Ссылка на подписку (для приложений):\n"
+        f"{subscription_link}\n\n"
+        f"📥 Чтобы скопировать ссылку нажмите ниже:\n"
+        f"<code>{subscription_link}</code>\n\n"
+        f"ℹ️ Используйте ссылку на подписку в поддерживаемых приложениях "
+        f"(например, Hiddify, HAPP и др.)"
     )
 
+    # Просто показываем сообщение без кнопок для копирования
     await message.answer(account_text, parse_mode="HTML")
 
 
@@ -551,6 +564,7 @@ async def regenerate_vpn_link(message: types.Message):
 
         # Создаём нового клиента в панели с ТЕМ ЖЕ СРОКОМ ДЕЙСТВИЯ
         email_prefix = user['client_email'].split('_')[0] if '_' in user['client_email'] else 'user'
+        print(email_prefix, user_id)
         result = vpn_manager.create_client(
             days=remaining_days,
             email_prefix=f"{email_prefix}_{user_id}"
@@ -574,6 +588,9 @@ async def regenerate_vpn_link(message: types.Message):
 
         # Генерируем и отправляем новую ссылку
         new_vpn_link = vpn_manager.generate_vpn_link(result['uuid'], result['email'])
+        user_id = message.from_user.id
+        user = get_user_by_telegram_id(user_id)
+        subscription_link = vpn_manager.generate_subscription_link(user['sub_id'])
 
         # Формируем сообщение об успехе
         success_message = (
@@ -590,6 +607,12 @@ async def regenerate_vpn_link(message: types.Message):
         success_message += (
             f"\n🔗 Новая ссылка для подключения (нажмите чтобы скопировать):\n\n"
             f"<code>{new_vpn_link}</code>\n\n"
+            f"📥 Ссылка на подписку (для приложений):\n"
+            f"{subscription_link}\n\n"
+            f"📥 Чтобы скопировать ссылку нажмите ниже:\n"
+            f"<code>{subscription_link}</code>\n\n"
+            f"ℹ️ Используйте ссылку на подписку в поддерживаемых приложениях "
+            f"(например, Hiddify, HAPP и др.)"
             f"⚠️ Сохраните эту ссылку в надёжном месте!"
         )
 
