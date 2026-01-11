@@ -43,10 +43,10 @@ Configuration.secret_key = YOOKASSA_API_KEY  # Используем API_KEY
 
 # Тарифы подписок (в рублях)
 SUBSCRIPTION_PRICES = {
-    30: 10,    # 30 дней - 299 руб
-    90: 320,    # 90 дней - 799 руб
-    180: 590,  # 180 дней - 1499 руб
-    365: 1100   # 365 дней - 2699 руб
+    30: 150,
+    90: 320,
+    180: 590,
+    365: 1100
 }
 
 SUBSCRIPTION_BASE_URL = os.getenv("SUBSCRIPTION_BASE_URL")
