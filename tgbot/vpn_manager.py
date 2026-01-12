@@ -157,6 +157,12 @@ class VPNManager:
             return traffic_dict
         except Exception as e:
             print(f"Ошибка при получении трафика всех клиентов: {e}")
+            try:
+                print(datetime.now().time().strftime("%H:%M:%S"), 'Ошибка в vpn_manager при получении трафика всех клиентов')
+                print('Адрес запроса', list_url)
+                print('Ответ 3x-ui на запрос:', response)
+            except Exception as e:
+                print('При попытке просмотра переменной ``response`` возникла ошибка', e)
             return {}
 
     def create_client(self, days=0, email_prefix="user"):
@@ -207,6 +213,8 @@ class VPNManager:
                 }
             return {'success': False, 'error': result.get('msg')}
         except Exception as e:
+            print(datetime.now().time().strftime("%H:%M:%S"), 'Ошибка в vpn_manager при создании клиента')
+            print('Ответ 3x-ui на запрос:', response)
             return {'success': False, 'error': str(e)}
 
     def generate_subscription_link(self, sub_id):
