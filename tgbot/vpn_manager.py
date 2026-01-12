@@ -409,7 +409,7 @@ class VPNManager:
         """Получение списка всех клиентов из панели"""
         try:
             list_url = f"{self.base_url}/panel/api/inbounds/list"
-            response = self.session.post(list_url)
+            response = self.session.get(list_url)
             result = response.json()
 
             clients_list = []
