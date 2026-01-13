@@ -226,6 +226,7 @@ def get_admin_keyboard():
             [InlineKeyboardButton(text="🔄 Синхронизировать БД", callback_data="admin_sync_db")],
             [InlineKeyboardButton(text="📋 Проверить расхождения", callback_data="admin_check_orphans")],
             [InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")],
+            [InlineKeyboardButton(text="🔄 Восстановить сессию", callback_data="admin_renew_session")],
             [InlineKeyboardButton(text="⬅️ На главную", callback_data="back_to_main")]
         ]
     )
@@ -1173,19 +1174,19 @@ async def cancel_cleanup(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@dp.message(Command("renew_session"))
-async def cmd_renew_session(message: types.Message):
+@dp.callback_query(lambda c: c.data == "admin_renew_session")
+async def admin_renew_session_handler(callback: types.CallbackQuery):
     """Ручное восстановление сессии с панелью"""
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ У вас нет доступа к этой команде!")
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.message.answer("❌ У вас нет доступа к этой команде!")
         return
 
-    await message.answer("🔄 Пытаюсь восстановить сессию с панелью...")
+    await callback.message.answer("🔄 Пытаюсь восстановить сессию с панелью...")
 
     if vpn_manager.renew_session():
-        await message.answer("✅ Сессия успешно восстановлена!")
+        await callback.message.answer("✅ Сессия успешно восстановлена!")
     else:
-        await message.answer("❌ Не удалось восстановить сессию. Проверьте логи.")
+        await callback.message.answer("❌ Не удалось восстановить сессию. Проверьте логи.")
 
 
 # ========== ОСНОВНАЯ ФУНКЦИЯ С ПЕРЕЗАПУСКОМ ==========
