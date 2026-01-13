@@ -9,12 +9,31 @@ from datetime import datetime
 from config import PANEL_HOST, PANEL_USERNAME, PANEL_PASSWORD, INBOUND_ID, SUBSCRIPTION_BASE_URL, SUBSCRIPTION_PATH
 
 
+def require_auth(func):
+    """Декоратор для автоматической проверки и восстановления авторизации"""
+
+    def wrapper(self, *args, **kwargs):
+        # Проверяем и восстанавливаем авторизацию перед выполнением метода
+        if not self.ensure_authenticated():
+            raise Exception("Не удалось аутентифицироваться в панели")
+
+        # Выполняем оригинальный метод
+        return func(self, *args, **kwargs)
+
+    return wrapper
+
 class VPNManager:
     def __init__(self):
         self.session = requests.Session()
         self.base_url = PANEL_HOST
         self.inbound_config = {}
-        self.login()
+        self.is_logged_in = False
+        self.login_retry_count = 0
+        self.max_login_retries = 3
+
+        # Инициализируем сессию
+        self._initialize_session()
+        print(f"✅ VPNManager инициализирован")
         self.fetch_inbound_config()
 
     def login(self):
@@ -31,6 +50,70 @@ class VPNManager:
             print(e)
             return False
 
+    def _initialize_session(self):
+        """Инициализация сессии с повторными попытками"""
+        for attempt in range(self.max_login_retries):
+            print(f"🔐 Попытка авторизации {attempt + 1}/{self.max_login_retries}")
+            if self.login():
+                self.is_logged_in = True
+                self.login_retry_count = 0
+                return True
+            print(f"❌ Авторизация не удалась, попытка {attempt + 1}")
+            time.sleep(2)  # Ждем перед следующей попыткой
+
+        print(f"❌ Не удалось авторизоваться после {self.max_login_retries} попыток")
+        self.is_logged_in = False
+        return False
+
+    def ensure_authenticated(self):
+        """Проверка и восстановление аутентификации при необходимости"""
+        if not self.is_logged_in:
+            print("⚠️ Сессия не активна, пытаюсь восстановить...")
+            return self.renew_session()
+
+        # Проверяем, жива ли сессия, делая легкий запрос
+        try:
+            test_url = f"{self.base_url}/panel/api/inbounds/list"
+            response = self.session.get(test_url, timeout=5)
+
+            # Если получаем 404 или редирект на логин
+            if response.status_code == 404 or "login" in response.url:
+                print("⚠️ Сессия устарела, требуется повторная авторизация")
+                return self.renew_session()
+
+            # Пробуем распарсить JSON
+            response.json()
+            return True
+
+        except (requests.RequestException, ValueError):
+            print("⚠️ Проблема с сессией, требуется повторная авторизация")
+            return self.renew_session()
+
+    def renew_session(self):
+        """Повторная авторизация с очисткой сессии"""
+        print("🔄 Выполняю повторную авторизацию...")
+
+        # Очищаем сессию
+        self.session.cookies.clear()
+        self.session.headers.clear()
+
+        # Повторная авторизация
+        if self.login():
+            self.is_logged_in = True
+            self.login_retry_count = 0
+            print("✅ Сессия восстановлена")
+            return True
+        else:
+            self.is_logged_in = False
+            self.login_retry_count += 1
+            print(f"❌ Не удалось восстановить сессию (попытка {self.login_retry_count})")
+
+            if self.login_retry_count >= self.max_login_retries:
+                print("⚠️ Достигнут лимит попыток восстановления сессии")
+
+            return False
+
+    @require_auth
     def fetch_inbound_config(self):
         """Получение конфигурации инбаунда для генерации ссылок"""
         list_url = f"{self.base_url}/panel/api/inbounds/list"
@@ -106,6 +189,7 @@ class VPNManager:
 
         return False
 
+    @require_auth
     def get_client_traffic(self, client_email):
         """Получение трафика клиента в MB"""
         try:
@@ -132,39 +216,52 @@ class VPNManager:
 
         return 0
 
+    @require_auth
     def get_all_clients_traffic(self):
         """Получение трафика всех клиентов в инбаунде"""
         try:
             list_url = f"{self.base_url}/panel/api/inbounds/list"
-            response = self.session.get(list_url)
-            result = response.json()
+
+            print(f"📊 Запрос трафика всех клиентов: {list_url}")
+            response = self._make_request_with_retry('GET', list_url)
+
+            if response is None:
+                print("❌ Не удалось выполнить запрос после всех попыток")
+                return {}
+
+            # Пробуем распарсить JSON
+            try:
+                result = response.json()
+            except ValueError as e:
+                print(f"❌ Ошибка парсинга JSON: {e}")
+                print(f"📄 Ответ (первые 500 символов): {response.text[:500]}")
+                return {}
+
+            if not result.get('success'):
+                print(f"❌ Ошибка API при получении трафика: {result.get('msg', 'Неизвестная ошибка')}")
+                return {}
 
             traffic_dict = {}
-            if result.get('success'):
-                for inbound in result.get('obj', []):
-                    if inbound.get('id') == INBOUND_ID:
-                        client_stats = inbound.get('clientStats', [])
-                        for client in client_stats:
-                            email = client.get('email')
-                            up_bytes = client.get('up', 0)
-                            down_bytes = client.get('down', 0)
-                            total_bytes = up_bytes + down_bytes
+            for inbound in result.get('obj', []):
+                if inbound.get('id') == INBOUND_ID:
+                    client_stats = inbound.get('clientStats', [])
+                    for client in client_stats:
+                        email = client.get('email')
+                        up_bytes = client.get('up', 0)
+                        down_bytes = client.get('down', 0)
+                        total_bytes = up_bytes + down_bytes
+                        total_gb = total_bytes / (1024 ** 3)
+                        traffic_dict[email] = round(total_gb, 2)
+                    break
 
-                            # Преобразуем в GB
-                            total_gb = total_bytes / (1024 ** 3)
-                            traffic_dict[email] = round(total_gb, 2)
-                        break
+            print(f"✅ Получен трафик для {len(traffic_dict)} клиентов")
             return traffic_dict
+
         except Exception as e:
-            print(f"Ошибка при получении трафика всех клиентов: {e}")
-            try:
-                print(datetime.now().time().strftime("%H:%M:%S"), 'Ошибка в vpn_manager при получении трафика всех клиентов')
-                print('Адрес запроса', list_url)
-                print('Ответ 3x-ui на запрос:', response)
-            except Exception as e:
-                print('При попытке просмотра переменной ``response`` возникла ошибка', e)
+            print(f"❌ Неожиданная ошибка при получении трафика всех клиентов: {type(e).__name__}: {e}")
             return {}
 
+    @require_auth
     def create_client(self, days=0, email_prefix="user"):
         """Создание нового клиента"""
         client_uuid = str(uuid.uuid4())
@@ -256,6 +353,7 @@ class VPNManager:
 
         return link
 
+    @require_auth
     def update_client(self, client_uuid, client_email, sub_id, new_expiry_time):
         """Обновление клиента (продление подписки)"""
         flow_value = self.inbound_config.get('flow', 'xtls-rprx-vision')
@@ -288,6 +386,7 @@ class VPNManager:
             print(f"Ошибка при обновлении клиента: {e}")
             return False
 
+    @require_auth
     def delete_client(self, client_uuid):
         """Удаление клиента"""
         delete_url = f"{self.base_url}/panel/api/inbounds/{INBOUND_ID}/delClient/{client_uuid}"
@@ -315,6 +414,7 @@ class VPNManager:
         remaining_ms = timestamp_ms - now_ms
         return int(remaining_ms / (24 * 60 * 60 * 1000))
 
+    @require_auth
     def client_exists(self, client_email):
         """Проверяет, существует ли клиент в панели 3x-ui"""
         try:
@@ -443,6 +543,47 @@ class VPNManager:
                 'error': str(e)
             }
 
+    def _make_request_with_retry(self, method, url, data=None, max_retries=3):
+        """Выполнение запроса с повторными попытками"""
+        for attempt in range(max_retries):
+            try:
+                response = self.session.request(
+                    method,
+                    url,
+                    data=data,
+                    timeout=15,
+                    headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/json, text/plain, */*',
+                    }
+                )
+
+                # Проверяем статус
+                if response.status_code == 200:
+                    return response
+                elif response.status_code in [401, 403, 404]:
+                    print(f"⚠️ Получен статус {response.status_code} на попытке {attempt + 1}")
+                    if attempt < max_retries - 1:
+                        # Пробуем восстановить сессию
+                        if self.renew_session():
+                            continue
+                else:
+                    print(f"❌ Неожиданный статус {response.status_code}")
+
+            except requests.Timeout:
+                print(f"⏱️ Таймаут на попытке {attempt + 1}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)  # Ждем перед следующей попыткой
+                    continue
+            except requests.RequestException as e:
+                print(f"🌐 Ошибка сети на попытке {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+
+            break
+
+        return None
 if __name__ == "__main__":
     vm = VPNManager()
     print(vm.inbound_config)

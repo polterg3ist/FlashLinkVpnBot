@@ -1173,6 +1173,21 @@ async def cancel_cleanup(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@dp.message(Command("renew_session"))
+async def cmd_renew_session(message: types.Message):
+    """Ручное восстановление сессии с панелью"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет доступа к этой команде!")
+        return
+
+    await message.answer("🔄 Пытаюсь восстановить сессию с панелью...")
+
+    if vpn_manager.renew_session():
+        await message.answer("✅ Сессия успешно восстановлена!")
+    else:
+        await message.answer("❌ Не удалось восстановить сессию. Проверьте логи.")
+
+
 # ========== ОСНОВНАЯ ФУНКЦИЯ С ПЕРЕЗАПУСКОМ ==========
 async def main():
     """Основная функция с защитой от падений и улучшенным логированием"""
