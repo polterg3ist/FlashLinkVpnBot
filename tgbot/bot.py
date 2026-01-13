@@ -1188,6 +1188,9 @@ async def admin_renew_session_handler(callback: types.CallbackQuery):
     else:
         await callback.message.answer("❌ Не удалось восстановить сессию. Проверьте логи.")
 
+    await callback.answer()
+
+
 
 # ========== ОСНОВНАЯ ФУНКЦИЯ С ПЕРЕЗАПУСКОМ ==========
 async def main():
