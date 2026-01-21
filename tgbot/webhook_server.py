@@ -12,6 +12,9 @@ from database import get_payment_by_id, update_payment_status, get_user_by_teleg
 from vpn_manager import VPNManager
 from config import BOT_TOKEN
 import asyncio
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 app = FastAPI()
 
@@ -73,10 +76,51 @@ def init_bot(token: str):
     return bot
 
 
-from yookassa import Configuration, Webhook
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Block common scanner paths
+BLOCKED_PATHS = [
+    "/admin", "/wp-admin", "/wp-login", "/phpMyAdmin",
+    "/.env", "/.git", "/config", "/backup", "/console",
+    "/api/", "/manager", "/cgi-bin", "/shell", "/cmd"
+]
+
+
+@app.middleware("http")
+async def block_scanners(request: Request, call_next):
+    path = request.url.path.lower()
+
+    if any(blocked in path for blocked in BLOCKED_PATHS):
+        webhook_logger.warning(f"Blocked scanner attempt: {request.client.host} -> {path}")
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return await call_next(request)
+
+# ========== PUBLIC ENDPOINTS ==========
+
+@app.get("/")
+@limiter.limit("10/minute")
+async def root(request: Request):
+    """Root endpoint - gives scanners something harmless to find"""
+    return {
+        "status": "ok",
+        "service": "webhook-server",
+        "version": "1.0"
+    }
+
+@app.get("/health")
+@limiter.limit("10/minute")
+async def health(request: Request):
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat()
+    }
 
 @app.post("/webhook/yookassa")
+@limiter.limit("20/minute")
 async def yookassa_webhook(
         request: Request,
         signature: str = Header(None)
