@@ -225,6 +225,7 @@ def get_admin_keyboard():
             [InlineKeyboardButton(text="🔄 Продлить пользователю", callback_data="admin_renew_user")],
             [InlineKeyboardButton(text="🔄 Синхронизировать БД", callback_data="admin_sync_db")],
             [InlineKeyboardButton(text="📋 Проверить расхождения", callback_data="admin_check_orphans")],
+            [InlineKeyboardButton(text="🔄 Массовое восстановление", callback_data="admin_mass_restore")],
             [InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")],
             [InlineKeyboardButton(text="🔄 Восстановить сессию", callback_data="admin_renew_session")],
             [InlineKeyboardButton(text="⬅️ На главную", callback_data="back_to_main")]
@@ -252,6 +253,7 @@ async def cmd_start(message: types.Message):
 async def get_trial_subscription(message: types.Message):
     """Выдача пробной подписки"""
     user_id = message.from_user.id
+    username = message.from_user.username
 
     # Проверяем, есть ли уже пользователь
     existing_user = get_user_by_telegram_id(user_id)
@@ -260,7 +262,7 @@ async def get_trial_subscription(message: types.Message):
         return
 
     # Создаем клиента в 3x-ui
-    result = vpn_manager.create_client(days=TRIAL_DAYS, email_prefix=f"user_{user_id}")
+    result = vpn_manager.create_client(days=TRIAL_DAYS, telegram_id=user_id, username=username)
 
     if result['success']:
         # Сохраняем в БД
@@ -356,7 +358,8 @@ async def process_payment_start(callback: types.CallbackQuery):
         "user_id": user_id,
         "days": days,
         "telegram_username": callback.from_user.username or "",
-        "telegram_first_name": callback.from_user.first_name or ""
+        "telegram_first_name": callback.from_user.first_name or "",
+        "telegram_last_name": callback.from_user.last_name or ""
     }
 
     # Создаем платеж в ЮKassa
@@ -464,23 +467,48 @@ async def my_payments(message: types.Message):
 async def my_account(message: types.Message):
     """Информация об аккаунте пользователя с трафиком и подпиской"""
     user_id = message.from_user.id
+    username = message.from_user.username
     user = get_user_by_telegram_id(user_id)
 
     if not user:
-        await message.answer("❌ У вас нет активной подписки. Вы можете получить пробную подписку или приобрести полную!")
+        await message.answer("❌ У вас нет активной подписки. Вы можете получить пробную подписку или приобрести полную!\n"
+                             "Используйте команду /start если не можете получить подписку")
         return
 
     # Проверяем, существует ли клиент в панели
     if not vpn_manager.client_exists(user['client_email']):
-        delete_user_by_email(user['client_email'])
-        await message.answer(
-            "❌ Ваша подписка не найдена в системе.\n"
-            "Возможно, она была удалена администратором.\n\n"
-            "Пожалуйста, создайте новую подписку.\n"
-            "Используйте команду /start если не можете получить подписку",
-            reply_markup=get_user_keyboard(user_id)
+        # ВОССТАНАВЛИВАЕМ клиента вместо удаления из БД
+        await message.answer("🔄 Обнаружено, что ваша подписка отсутствует в системе. Восстанавливаю...")
+
+        # Восстанавливаем клиента в панели
+        result = vpn_manager.restore_client(
+            telegram_id=user_id,
+            username=username,
+            client_email=user['client_email'],
+            client_uuid=user['client_uuid'],
+            sub_id=user['sub_id'],
+            expiry_time=user['expiry_time']
         )
-        return
+
+        if not result['success']:
+            await message.answer(
+                "❌ Не удалось восстановить вашу подписку. Обратитесь к администратору.\n"
+                f"Ошибка: {result.get('error', 'Неизвестная ошибка')}"
+            )
+            return
+
+        # Обновляем данные в БД (email мог измениться)
+        if result['email'] != user['client_email']:
+            update_user_client(
+                telegram_id=user_id,
+                new_client_email=result['email'],
+                new_client_uuid=result['uuid'],
+                new_sub_id=result['sub_id']
+            )
+            # Обновляем объект user
+            user = get_user_by_telegram_id(user_id)
+
+        await message.answer("✅ Ваша подписка успешно восстановлена!")
 
     # Получаем трафик
     traffic_gb = vpn_manager.get_client_traffic(user['client_email'])
@@ -509,7 +537,6 @@ async def my_account(message: types.Message):
         f"(например, Hiddify, HAPP и др.)"
     )
 
-    # Просто показываем сообщение без кнопок для копирования
     await message.answer(account_text, parse_mode="HTML")
 
 
@@ -517,6 +544,7 @@ async def my_account(message: types.Message):
 async def regenerate_vpn_link(message: types.Message):
     """Генерация новой VPN-ссылки для пользователя с активной подпиской"""
     user_id = message.from_user.id
+    username = message.from_user.username
     user = get_user_by_telegram_id(user_id)
 
     if not user:
@@ -557,40 +585,42 @@ async def regenerate_vpn_link(message: types.Message):
     # 2. ЕСЛИ ПОДПИСКА АКТИВНА — ПЕРЕГЕНЕРИРУЕМ ССЫЛКУ
     try:
         # Проверяем, существует ли старый клиент в панели
-        if not vpn_manager.client_exists(user['client_email']):
-            await message.answer("⚠️ Ваш старый аккаунт не найден. Создаём новый...")
+        client_exists = vpn_manager.client_exists(user['client_email'])
 
-        # Удаляем старого клиента из панели (игнорируем ошибки, если его уже нет)
-        vpn_manager.delete_client(user['client_uuid'])
+        if client_exists:
+            # Удаляем старого клиента из панели
+            vpn_manager.delete_client(user['client_uuid'])
+            await message.answer("🔄 Удаляю старую ссылку...")
+        else:
+            # Клиента нет в панели, просто сообщаем
+            await message.answer("ℹ️ Старая ссылка не найдена в системе, создаю новую...")
 
-        # Создаём нового клиента в панели с ТЕМ ЖЕ СРОКОМ ДЕЙСТВИЯ
-        email_prefix = user['client_email'].split('_')[0] if '_' in user['client_email'] else 'user'
-        print(email_prefix, user_id)
-        result = vpn_manager.create_client(
-            days=remaining_days,
-            email_prefix=f"{email_prefix}_{user_id}"
-        )
+            # Создаём нового клиента в панели с ТЕМ ЖЕ СРОКОМ ДЕЙСТВИЯ
+            # Используем оригинальный expiry_time из БД
+            result = vpn_manager.create_client(
+                telegram_id=user_id,
+                username=username,
+                expiry_time=user['expiry_time']  # Используем оригинальный срок
+            )
+            if not result['success']:
+                await message.answer(f"❌ Ошибка при создании новой ссылки: {result.get('error', 'Неизвестная ошибка')}")
+                return
 
-        if not result['success']:
-            await message.answer(f"❌ Ошибка при создании нового клиента: {result.get('error', 'Неизвестная ошибка')}")
-            return
+            # Обновляем данные пользователя в БД
+            success = update_user_client(
+                telegram_id=user_id,
+                new_client_email=result['email'],
+                new_client_uuid=result['uuid'],
+                new_sub_id=result['sub_id']
+            )
 
-        # Обновляем данные пользователя в БД
-        success = update_user_client(
-            telegram_id=user_id,
-            new_client_email=result['email'],
-            new_client_uuid=result['uuid'],
-            new_sub_id=result['sub_id']
-        )
+            if not success:
+                await message.answer("❌ Ошибка при обновлении данных в базе.")
+                return
 
-        if not success:
-            await message.answer("❌ Ошибка при обновлении данных в базе.")
-            return
 
         # Генерируем и отправляем новую ссылку
         new_vpn_link = vpn_manager.generate_vpn_link(result['uuid'], result['email'])
-        user_id = message.from_user.id
-        user = get_user_by_telegram_id(user_id)
         subscription_link = vpn_manager.generate_subscription_link(user['sub_id'])
 
         # Формируем сообщение об успехе
@@ -1188,6 +1218,63 @@ async def admin_renew_session_handler(callback: types.CallbackQuery):
     else:
         await callback.message.answer("❌ Не удалось восстановить сессию. Проверьте логи.")
 
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == "admin_mass_restore")
+async def admin_mass_restore(callback: types.CallbackQuery):
+    """Массовое восстановление пользователей из БД в панель"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа!")
+        return
+
+    await callback.message.answer("🔄 Начинаю массовое восстановление пользователей...")
+
+    # Получаем всех пользователей из БД
+    db_users = get_all_users()
+    restored_count = 0
+    error_count = 0
+
+    for user in db_users:
+        try:
+            # Проверяем, существует ли клиент в панели
+            if not vpn_manager.client_exists(user['client_email']):
+                # Пытаемся восстановить
+                # Нужно получить username из другого места или оставить пустым
+                result = vpn_manager.restore_client(
+                    telegram_id=user['telegram_id'],
+                    username="",  # У нас нет username в БД
+                    client_email=user['client_email'],
+                    client_uuid=user['client_uuid'],
+                    sub_id=user['sub_id'],
+                    expiry_time=user['expiry_time']
+                )
+
+                if result['success']:
+                    restored_count += 1
+                    # Обновляем email если он изменился
+                    if result['email'] != user['client_email']:
+                        update_user_client(
+                            telegram_id=user['telegram_id'],
+                            new_client_email=result['email'],
+                            new_client_uuid=result['uuid'],
+                            new_sub_id=result['sub_id']
+                        )
+                else:
+                    error_count += 1
+
+        except Exception as e:
+            error_count += 1
+            logger.error(f"Ошибка при восстановлении пользователя {user['telegram_id']}: {e}")
+
+    await callback.message.answer(
+        f"✅ Массовое восстановление завершено!\n\n"
+        f"📊 Результаты:\n"
+        f"• Всего пользователей в БД: {len(db_users)}\n"
+        f"• Успешно восстановлено: {restored_count}\n"
+        f"• Ошибок: {error_count}\n\n"
+        f"Теперь все пользователи из БД должны быть в панели."
+    )
     await callback.answer()
 
 

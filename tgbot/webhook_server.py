@@ -212,13 +212,16 @@ async def handle_payment_succeeded(payment_id: str, payment_data: dict):
         # Получаем пользователя (теперь передаем число)
         user = get_user_by_telegram_id(user_id)
 
+        # Получаем username из метаданных
+        username = metadata.get('telegram_username', '')
+
         if not user:
             # ПОЛЬЗОВАТЕЛЯ НЕТ. Нужно его создать.
             webhook_logger.info(f"Пользователь {user_id} не найден в БД. Создаем для него аккаунт...")
 
             # 1. Создаем клиента в 3x-ui
             # Можно задать email_prefix, например, 'paid_user'
-            result = vpn_manager.create_client(days=days, email_prefix=f"without_test_sub_tgID-{user_id}")
+            result = vpn_manager.create_client(days=days, telegram_id=user_id_str, username=username)
 
             if not result['success']:
                 webhook_logger.error(f"Не удалось создать клиента в панели для {user_id}: {result.get('error')}")

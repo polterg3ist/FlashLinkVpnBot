@@ -1,3 +1,5 @@
+import re
+
 import requests
 import json
 import uuid
@@ -262,12 +264,31 @@ class VPNManager:
             return {}
 
     @require_auth
-    def create_client(self, days=0, email_prefix="user"):
+    def create_client(self, days=0, telegram_id=None, username=None,
+                  email=None, client_uuid=None, sub_id=None, expiry_time=None):
         """Создание нового клиента"""
         client_uuid = str(uuid.uuid4())
         # Генерируем короткий email (как в новой панели)
-        client_email = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
         sub_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
+
+        # Генерируем email на основе Telegram ID и username
+        if telegram_id:
+            # Очищаем username от недопустимых символов для email
+            if username:
+                # Удаляем все символы, кроме букв, цифр, точек и подчеркиваний
+                clean_username = re.sub(r'[^a-zA-Z0-9._]', '', username)
+                # Ограничиваем длину username
+                clean_username = clean_username[:20]
+                # Формируем email
+                client_email = f"tg-{telegram_id}_{clean_username}"
+            else:
+                client_email = f"tg-{telegram_id}"
+        else:
+            # Fallback: генерируем случайный email если нет telegram_id
+            client_email = f"tg_noid-{''.join(random.choices(string.ascii_lowercase + string.digits, k=8))}"
+
+        # Убедимся, что email не слишком длинный
+        client_email = client_email[:64]
 
         # Установка срока действия
         expiry_time = 0
@@ -290,7 +311,7 @@ class VPNManager:
                     "enable": True,
                     "tgId": "",
                     "subId": sub_id,
-                    "comment": "",
+                    "comment": f"Telegram ID: {telegram_id} | Username: @{username if username else 'No username'}",
                     "reset": 0
                 }]
             })
@@ -313,6 +334,44 @@ class VPNManager:
             print(datetime.now().time().strftime("%H:%M:%S"), 'Ошибка в vpn_manager при создании клиента')
             print('Ответ 3x-ui на запрос:', response)
             return {'success': False, 'error': str(e)}
+
+    # В класс VPNManager добавим метод:
+    @require_auth
+    def restore_client(self, telegram_id, username, client_email, client_uuid, sub_id, expiry_time):
+        """
+        Восстановление клиента в панели с теми же данными
+        Используется при миграции или когда клиент удален из панели, но есть в БД
+        """
+        # Если переданный email уже существует, генерируем новый
+        if self.client_exists(client_email):
+            # Генерируем новый email на основе telegram_id и username
+            clean_username = re.sub(r'[^a-zA-Z0-9._]', '', username) if username else ''
+            clean_username = clean_username[:20]
+            client_email = f"tg-{telegram_id}_{clean_username}"
+
+        # Проверяем, есть ли подписка (expiry_time в будущем или 0 для бессрочной)
+        now_ms = int(time.time() * 1000)
+        if expiry_time > 0 and expiry_time < now_ms:
+            # Подписка истекла, создаем с 0 дней (админ может продлить)
+            days = 0
+        else:
+            # Вычисляем оставшиеся дни из expiry_time
+            days = self.get_days_left(expiry_time) if expiry_time > 0 else 0
+            if days == "∞":
+                days = 0  # Бессрочная подписка
+
+        # Создаем клиента
+        result = self.create_client(
+            days=days,
+            telegram_id=telegram_id,
+            username=username,
+            email=client_email,  # Передаем email для использования
+            client_uuid=client_uuid,  # Можем использовать старый или сгенерировать новый
+            sub_id=sub_id,  # Можем использовать старый или сгенерировать новый
+            expiry_time=expiry_time  # Сохраняем оригинальный срок
+        )
+
+        return result
 
     def generate_subscription_link(self, sub_id):
         """Генерация ссылки на подписку (новая панель)"""
