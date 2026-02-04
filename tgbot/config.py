@@ -43,7 +43,7 @@ Configuration.secret_key = YOOKASSA_API_KEY  # Используем API_KEY
 
 # Тарифы подписок (в рублях)
 SUBSCRIPTION_PRICES = {
-    30: 10,
+    30: 150,
     90: 320,
     180: 590,
     365: 1100
