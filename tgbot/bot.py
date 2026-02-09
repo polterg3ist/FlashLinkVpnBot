@@ -202,12 +202,14 @@ def get_user_keyboard(telegram_id):
             [KeyboardButton(text="👤 Мой аккаунт")],
             [KeyboardButton(text="💰 Купить подписку")],
             [KeyboardButton(text="🔁 Получить новую ссылку")],
-            [KeyboardButton(text="📊 Мои платежи")]
+            [KeyboardButton(text="📊 Мои платежи")],
+            [KeyboardButton(text="🔓 Бесплатный прокси TG")]
         ])
     else:
         keyboard_buttons.extend([
             [KeyboardButton(text="🎁 Получить пробную подписку")],
-            [KeyboardButton(text="💰 Купить подписку")]
+            [KeyboardButton(text="💰 Купить подписку")],
+            [KeyboardButton(text="🔓 Бесплатный прокси TG")]
         ])
 
     if telegram_id in ADMIN_IDS:
@@ -243,7 +245,9 @@ async def cmd_start(message: types.Message):
         "👋 Добро пожаловать в FlashLinkVPN бот!\n\n"
         f"🎁 Получите бесплатную пробную подписку на {TRIAL_DAYS} дней\n"
         "🔐 Безопасный и быстрый доступ к интернету\n"
-        "🌍 Доступ к любым сайтам и сервисам"
+        "🌍 Доступ к любым сайтам и сервисам\n"
+        "⚡ Также доступен **бесплатный прокси для Telegram**!\n"
+        "   Используйте его для стабильного доступа к мессенджеру. Нажмите кнопку '🔓 Бесплатный прокси TG' ниже."
     )
 
     await message.answer(welcome_text, reply_markup=get_user_keyboard(user_id))
@@ -537,7 +541,7 @@ async def my_account(message: types.Message):
         f"(например, Hiddify, HAPP и др.)"
     )
 
-    await message.answer(account_text, parse_mode="HTML")
+    await message.answer(account_text, parse_mode="HTML", reply_markup=get_user_keyboard(user_id))
 
 
 @dp.message(lambda message: message.text == "🔁 Получить новую ссылку")
@@ -664,6 +668,38 @@ async def admin_panel(message: types.Message):
         return
 
     await message.answer("👑 Админ-панель", reply_markup=get_admin_keyboard())
+
+
+@dp.message(lambda message: message.text == "🔓 Бесплатный прокси TG")
+async def send_free_proxy(message: types.Message):
+    """Отправляет пользователю ссылку для подключения к бесплатному прокси Telegram"""
+    # Данные вашего прокси-сервера
+    proxy_server = "144.31.105.43"
+    proxy_port = "443"
+    proxy_secret = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+
+    # Формирование ссылки MTProto прокси для Telegram
+    proxy_link = f"tg://proxy?server={proxy_server}&port={proxy_port}&secret={proxy_secret}"
+
+    # Текст сообщения с инструкцией
+    proxy_message = (
+        "⚡ **Бесплатный прокси для Telegram**\n\n"
+        "Нажмите на ссылку ниже, чтобы автоматически добавить прокси в свой Telegram. "
+        "После этого мессенджер будет стабильно работать.\n\n"
+        f"{proxy_link}\n\n"
+        "**Инструкция, если ссылка не сработала:**\n"
+        "1. Откройте **Настройки** Telegram.\n"
+        "2. Перейдите в раздел **Данные и хранилище** > **Прокси**.\n"
+        "3. Нажмите **Добавить прокси** и выберите тип **MTPROTO**.\n"
+        "4. Введите данные вручную:\n"
+        f"   • **Сервер:** `{proxy_server}`\n"
+        f"   • **Порт:** `{proxy_port}`\n"
+        f"   • **Секретный ключ:** `{proxy_secret}`\n"
+        "5. Активируйте переключатель.\n\n"
+        "✅ Значок щита вверху экрана подтвердит подключение."
+    )
+
+    await message.answer(proxy_message, parse_mode="Markdown")
 
 
 # ========== АДМИН-ОБРАБОТЧИКИ ==========
