@@ -501,15 +501,17 @@ async def my_account(message: types.Message):
             )
             return
 
-        # Обновляем данные в БД (email мог измениться)
-        if result['email'] != user['client_email']:
+        # Если данные изменились – обновляем БД
+        if (result['email'] != user['client_email'] or
+                result['uuid'] != user['client_uuid'] or
+                result['sub_id'] != user['sub_id']):
             update_user_client(
                 telegram_id=user_id,
                 new_client_email=result['email'],
                 new_client_uuid=result['uuid'],
                 new_sub_id=result['sub_id']
             )
-            # Обновляем объект user
+            # Обновляем объект user для дальнейшего использования
             user = get_user_by_telegram_id(user_id)
 
         await message.answer("✅ Ваша подписка успешно восстановлена!")
@@ -593,34 +595,35 @@ async def regenerate_vpn_link(message: types.Message):
 
         if client_exists:
             # Удаляем старого клиента из панели
-            vpn_manager.delete_client(user['client_uuid'])
+            print(vpn_manager.delete_client(user['client_uuid']))
             await message.answer("🔄 Удаляю старую ссылку...")
         else:
             # Клиента нет в панели, просто сообщаем
             await message.answer("ℹ️ Старая ссылка не найдена в системе, создаю новую...")
 
-            # Создаём нового клиента в панели с ТЕМ ЖЕ СРОКОМ ДЕЙСТВИЯ
-            # Используем оригинальный expiry_time из БД
-            result = vpn_manager.create_client(
-                telegram_id=user_id,
-                username=username,
-                expiry_time=user['expiry_time']  # Используем оригинальный срок
-            )
-            if not result['success']:
-                await message.answer(f"❌ Ошибка при создании новой ссылки: {result.get('error', 'Неизвестная ошибка')}")
-                return
+        # Создаём нового клиента в панели с ТЕМ ЖЕ СРОКОМ ДЕЙСТВИЯ
+        # Используем оригинальный expiry_time из БД
+        result = vpn_manager.create_client(
+            telegram_id=user_id,
+            username=username,
+            expiry_time=user['expiry_time']  # Используем оригинальный срок
+        )
 
-            # Обновляем данные пользователя в БД
-            success = update_user_client(
-                telegram_id=user_id,
-                new_client_email=result['email'],
-                new_client_uuid=result['uuid'],
-                new_sub_id=result['sub_id']
-            )
+        if not result['success']:
+            await message.answer(f"❌ Ошибка при создании новой ссылки: {result.get('error', 'Неизвестная ошибка')}")
+            return
 
-            if not success:
-                await message.answer("❌ Ошибка при обновлении данных в базе.")
-                return
+        # Обновляем данные пользователя в БД
+        success = update_user_client(
+            telegram_id=user_id,
+            new_client_email=result['email'],
+            new_client_uuid=result['uuid'],
+            new_sub_id=result['sub_id']
+        )
+
+        if not success:
+            await message.answer("❌ Ошибка при обновлении данных в базе.")
+            return
 
 
         # Генерируем и отправляем новую ссылку
@@ -892,6 +895,10 @@ async def admin_renew_user_process(callback: types.CallbackQuery, state: FSMCont
         await callback.answer("Нет доступа!")
         return
 
+    user_id = callback.from_user.id
+    username = callback.from_user.username
+    user = get_user_by_telegram_id(user_id)
+
     days_map = {
         'admin_renew_days_30': 30,
         'admin_renew_days_90': 90,
@@ -929,7 +936,9 @@ async def admin_renew_user_process(callback: types.CallbackQuery, state: FSMCont
         user['client_uuid'],
         user['client_email'],
         user['sub_id'],
-        new_expiry
+        new_expiry,
+        user_id,
+        username
     )
 
     if success:
@@ -942,6 +951,7 @@ async def admin_renew_user_process(callback: types.CallbackQuery, state: FSMCont
         )
     else:
         await callback.message.answer(f"❌ Ошибка при продлении подписки для {client_email}")
+        print(success,user['client_uuid'],user['client_email'],)
 
     await state.clear()
     await callback.answer()

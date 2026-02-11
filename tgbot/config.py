@@ -34,6 +34,7 @@ CLEANUP_SECRET_CODE = "P8Wov7CRKkRZ6O8U"
 # Текущий режим (sandbox или production)
 # YOOKASSA_MODE = "sandbox"  # Поменяйте на "production" для реальных платежей
 YOOKASSA_MODE = "production"  # Поменяйте на "production" для реальных платежей
+BOT_MODE = os.getenv("MODE")
 
 # ==== Настройка официальной библиотеки ЮKassa ====
 

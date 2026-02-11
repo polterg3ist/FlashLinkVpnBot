@@ -8,7 +8,8 @@ import random
 import string
 import urllib.parse
 from datetime import datetime
-from config import PANEL_HOST, PANEL_USERNAME, PANEL_PASSWORD, INBOUND_ID, SUBSCRIPTION_BASE_URL, SUBSCRIPTION_PATH
+from config import PANEL_HOST, PANEL_USERNAME, PANEL_PASSWORD, INBOUND_ID, SUBSCRIPTION_BASE_URL, SUBSCRIPTION_PATH, \
+    BOT_MODE
 
 
 def require_auth(func):
@@ -290,10 +291,13 @@ class VPNManager:
         # Убедимся, что email не слишком длинный
         client_email = client_email[:64]
 
-        # Установка срока действия
-        expiry_time = 0
-        if days > 0:
-            expiry_time = int(time.time() * 1000) + (days * 24 * 60 * 60 * 1000)
+        if BOT_MODE == "TEST":
+            client_email += "_test"
+        if not expiry_time:
+            # Установка срока действия
+            expiry_time = 0
+            if days > 0:
+                expiry_time = int(time.time() * 1000) + (days * 24 * 60 * 60 * 1000)
 
         add_url = f"{self.base_url}/panel/api/inbounds/addClient"
 
@@ -349,29 +353,30 @@ class VPNManager:
             clean_username = clean_username[:20]
             client_email = f"tg-{telegram_id}_{clean_username}"
 
-        # Проверяем, есть ли подписка (expiry_time в будущем или 0 для бессрочной)
-        now_ms = int(time.time() * 1000)
-        if expiry_time > 0 and expiry_time < now_ms:
-            # Подписка истекла, создаем с 0 дней (админ может продлить)
-            days = 0
-        else:
-            # Вычисляем оставшиеся дни из expiry_time
-            days = self.get_days_left(expiry_time) if expiry_time > 0 else 0
-            if days == "∞":
-                days = 0  # Бессрочная подписка
+            if BOT_MODE == "TEST":
+                client_email += "_test"
 
         # Создаем клиента
         result = self.create_client(
-            days=days,
+            days=0,
             telegram_id=telegram_id,
             username=username,
-            email=client_email,  # Передаем email для использования
-            client_uuid=client_uuid,  # Можем использовать старый или сгенерировать новый
-            sub_id=sub_id,  # Можем использовать старый или сгенерировать новый
+            email=client_email,
+            client_uuid=None,
+            sub_id=None,
             expiry_time=expiry_time  # Сохраняем оригинальный срок
         )
+        if result['success']:
+            # Возвращаем актуальные данные для обновления БД
+            return {
+                'success': True,
+                'email': result['email'],
+                'uuid': result['uuid'],
+                'sub_id': result['sub_id'],
+                'expiry_time': result['expiry_time']
+            }
+        return result  # {'success': False, 'error': ...}
 
-        return result
 
     def generate_subscription_link(self, sub_id):
         """Генерация ссылки на подписку (новая панель)"""
@@ -413,7 +418,7 @@ class VPNManager:
         return link
 
     @require_auth
-    def update_client(self, client_uuid, client_email, sub_id, new_expiry_time):
+    def update_client(self, client_uuid, client_email, sub_id, new_expiry_time, telegram_id, username):
         """Обновление клиента (продление подписки)"""
         flow_value = self.inbound_config.get('flow', 'xtls-rprx-vision')
         update_url = f"{self.base_url}/panel/api/inbounds/updateClient/{client_uuid}"
@@ -431,7 +436,7 @@ class VPNManager:
                     "enable": True,
                     "tgId": "",
                     "subId": sub_id,
-                    "comment": "",
+                    "comment": f"Telegram ID: {telegram_id} | Username: @{username if username else 'No username'}",
                     "reset": 0
                 }]
             })
@@ -440,6 +445,7 @@ class VPNManager:
         try:
             response = self.session.post(update_url, data=update_data)
             result = response.json()
+            print(result)
             return result.get('success', False)
         except Exception as e:
             print(f"Ошибка при обновлении клиента: {e}")
@@ -449,6 +455,7 @@ class VPNManager:
     def delete_client(self, client_uuid):
         """Удаление клиента"""
         delete_url = f"{self.base_url}/panel/api/inbounds/{INBOUND_ID}/delClient/{client_uuid}"
+        print('url to delete', delete_url)
 
         try:
             response = self.session.post(delete_url)
